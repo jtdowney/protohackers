@@ -7,7 +7,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::proxy::read_proxy_proto;
+use crate::proxy::{self, read_proxy_proto};
 
 pub async fn start(port: u16) -> eyre::Result<()> {
     let bind = format!("0.0.0.0:{port}");
@@ -23,6 +23,7 @@ pub async fn start(port: u16) -> eyre::Result<()> {
 
             match read_proxy_proto(&mut reader).await {
                 Ok(addr) => info!("connection from {addr}"),
+                Err(proxy::Error::EmptyHeader) => return,
                 Err(e) => {
                     debug!(error = ?e, "failed to read proxy protocol");
                     return;

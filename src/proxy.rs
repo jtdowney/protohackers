@@ -1,9 +1,9 @@
 use std::{
+    io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
 };
 
-use eyre::bail;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till1},
@@ -11,7 +11,18 @@ use nom::{
     combinator::map_res,
     Finish, IResult,
 };
+use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("empty proxy header")]
+    EmptyHeader,
+    #[error("error reading proxy protocol header {0:?}: {1}")]
+    MalformedHeader(String, String),
+    #[error("network error")]
+    Io(#[from] io::Error),
+}
 
 fn ipv4_addr(input: &str) -> IResult<&str, IpAddr> {
     map_res(take_till1(|c: char| c.is_ascii_whitespace()), |addr| {
@@ -52,13 +63,18 @@ fn proxy_proto(input: &str) -> IResult<&str, (SocketAddr, SocketAddr)> {
     Ok((input, (source, destination)))
 }
 
-pub async fn read_proxy_proto<R: AsyncBufRead + Unpin>(reader: &mut R) -> eyre::Result<SocketAddr> {
+pub async fn read_proxy_proto<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+) -> Result<SocketAddr, Error> {
     let mut line = String::new();
     reader.read_line(&mut line).await?;
+    if line.is_empty() {
+        return Err(Error::EmptyHeader);
+    }
 
     match proxy_proto(&line).finish() {
         Ok((_, (source, _))) => Ok(source),
-        Err(e) => bail!("error reading proxy protocol header {:?}: {}", line, e),
+        Err(e) => Err(Error::MalformedHeader(line.clone(), e.to_string())),
     }
 }
 
@@ -120,6 +136,17 @@ mod tests {
 
         let source = read_proxy_proto(&mut reader).await?;
         assert_eq!(source, "1.2.3.4:45600".parse()?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn empty_header() -> eyre::Result<()> {
+        let reader = tokio_test::io::Builder::new().read(b"").build();
+        let mut reader = BufReader::new(reader);
+
+        let result = read_proxy_proto(&mut reader).await.unwrap_err();
+        assert!(matches!(result, Error::EmptyHeader));
 
         Ok(())
     }
