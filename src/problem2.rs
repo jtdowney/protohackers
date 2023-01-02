@@ -1,41 +1,8 @@
 use std::collections::BTreeMap;
 
+use eyre::bail;
 use nom::{branch::alt, bytes::complete::tag, number::complete::be_i32, Finish, IResult};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::TcpListener,
-};
-use tracing::{debug, error, info, warn};
-
-use crate::proxy::{self, read_proxy_proto};
-
-pub async fn start(port: u16) -> eyre::Result<()> {
-    let bind = format!("0.0.0.0:{port}");
-    let listener = TcpListener::bind(&bind).await?;
-    info!("listening on on {bind}");
-
-    loop {
-        let (mut socket, _) = listener.accept().await?;
-
-        tokio::spawn(async move {
-            let (reader, writer) = socket.split();
-            let mut reader = BufReader::new(reader);
-
-            match read_proxy_proto(&mut reader).await {
-                Ok(addr) => info!("connection from {addr}"),
-                Err(proxy::Error::EmptyHeader) => return,
-                Err(e) => {
-                    debug!(error = ?e, "failed to read proxy protocol");
-                    return;
-                }
-            }
-
-            if let Err(e) = serve(reader, writer).await {
-                warn!(error = ?e, "error serving client");
-            }
-        });
-    }
-}
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug)]
 enum Packet {
@@ -62,18 +29,14 @@ fn packet(input: &[u8]) -> IResult<&[u8], Packet> {
     Ok((input, packet))
 }
 
-async fn serve<R, W>(mut reader: R, mut writer: W) -> eyre::Result<()>
+pub async fn handle<T>(mut stream: T) -> eyre::Result<()>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut buf = [0; 9];
     let mut data = BTreeMap::new();
     loop {
-        if let Err(e) = reader.read_exact(&mut buf).await {
-            error!(error = ?e, "failed to read from socket");
-            break;
-        }
+        stream.read_exact(&mut buf).await?;
 
         match packet(&buf).finish() {
             Ok((_, Packet::Insert { timestamp, price })) => {
@@ -81,7 +44,7 @@ where
             }
             Ok((_, Packet::Query { start, end })) => {
                 if start > end {
-                    writer.write_i32(0).await?;
+                    stream.write_i32(0).await?;
                     continue;
                 }
 
@@ -90,22 +53,17 @@ where
                     .map(|(_, &p)| p as isize)
                     .collect::<Vec<isize>>();
                 if items.is_empty() {
-                    writer.write_i32(0).await?;
+                    stream.write_i32(0).await?;
                     continue;
                 }
 
                 let total = items.iter().sum::<isize>();
                 let mean = total / items.len() as isize;
-                writer.write_i32(mean as i32).await?;
+                stream.write_i32(mean as i32).await?;
             }
-            Err(e) => {
-                warn!(error = ?e, data = ?buf, "failed to parse");
-                break;
-            }
+            Err(e) => bail!("failed to parse {:?}: {:?}", buf, e),
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -122,10 +80,8 @@ mod tests {
             .read(b"Q\x00\x00\x30\x00\x00\x00\x40\x00")
             .write(b"\x00\x00\x00\x65")
             .build();
-        let (reader, writer) = tokio::io::split(stream);
-        let reader = BufReader::new(reader);
 
-        serve(reader, writer).await?;
+        let _ = handle(stream).await;
 
         Ok(())
     }
@@ -136,10 +92,8 @@ mod tests {
             .read(b"Q\x00\x00\x30\x00\x00\x00\x40\x00")
             .write(b"\x00\x00\x00\x00")
             .build();
-        let (reader, writer) = tokio::io::split(stream);
-        let reader = BufReader::new(reader);
 
-        serve(reader, writer).await?;
+        let _ = handle(stream).await;
 
         Ok(())
     }
@@ -154,10 +108,8 @@ mod tests {
             .read(b"Q\x00\x00\x40\x00\x00\x00\x30\x00")
             .write(b"\x00\x00\x00\x00")
             .build();
-        let (reader, writer) = tokio::io::split(stream);
-        let reader = BufReader::new(reader);
 
-        serve(reader, writer).await?;
+        let _ = handle(stream).await;
 
         Ok(())
     }
