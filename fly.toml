@@ -9,6 +9,7 @@ processes = []
   RUST_LOG = "info"
 
 [experimental]
+  cmd = ["/usr/bin/protohackers", "-p", "9000", "--proxy-protocol"]
   allowed_public_ports = []
   auto_rollback = true
 

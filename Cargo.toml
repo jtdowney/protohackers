@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+argh = "0.1.9"
 eyre = "0.6.8"
 nom = "7.1.1"
 primes = "0.3.0"
