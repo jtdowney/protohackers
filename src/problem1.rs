@@ -1,5 +1,8 @@
+use futures::SinkExt;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Framed, LinesCodec};
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -13,26 +16,25 @@ struct Response {
     prime: bool,
 }
 
-async fn handle_malformed_request<W>(writer: &mut W) -> eyre::Result<()>
-where
-    W: AsyncWrite + Unpin,
-{
-    writer.write_all(b"malformed request\n").await?;
-    Ok(())
-}
-
-pub async fn handle<T>(mut stream: T) -> eyre::Result<()>
+async fn malformed_request<T>(framed: &mut Framed<T, LinesCodec>) -> eyre::Result<()>
 where
     T: AsyncBufRead + AsyncWrite + Unpin,
 {
-    let mut buffer = String::new();
-    loop {
-        stream.read_line(&mut buffer).await?;
-        let Request { method, number } = match serde_json::from_str(&buffer) {
+    framed.send("malformed request").await?;
+    Ok(())
+}
+
+pub async fn handle<T>(stream: T) -> eyre::Result<()>
+where
+    T: AsyncBufRead + AsyncWrite + Unpin,
+{
+    let mut framed = Framed::new(stream, LinesCodec::new());
+    while let Some(Ok(line)) = framed.next().await {
+        let Request { method, number } = match serde_json::from_str(&line) {
             Ok(Request { method, .. }) if method != "isPrime" => {
-                return handle_malformed_request(&mut stream).await
+                return malformed_request(&mut framed).await
             }
-            Err(_) => return handle_malformed_request(&mut stream).await,
+            Err(_) => return malformed_request(&mut framed).await,
             Ok(r) => r,
         };
 
@@ -43,10 +45,11 @@ where
         };
 
         let response = Response { method, prime };
-        let data = serde_json::to_vec(&response)?;
-        stream.write_all(&data).await?;
-        stream.write_all(b"\n").await?;
+        let data = serde_json::to_string(&response)?;
+        framed.send(&data).await?;
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
