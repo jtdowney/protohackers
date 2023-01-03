@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
+
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub async fn handle<T>(mut stream: T) -> eyre::Result<()>
+pub async fn handle<T>(mut stream: T, _addr: SocketAddr, _state: ()) -> eyre::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -30,7 +32,7 @@ mod tests {
             .write(b"foobar")
             .build();
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }

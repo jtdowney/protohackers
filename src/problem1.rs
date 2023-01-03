@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -23,7 +25,7 @@ where
     Ok(())
 }
 
-pub async fn handle<T>(stream: T) -> eyre::Result<()>
+pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> eyre::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -65,7 +67,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -78,7 +80,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -91,7 +93,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        handle(stream).await?;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -104,7 +106,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        handle(stream).await?;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -117,7 +119,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -130,7 +132,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -143,7 +145,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream).await;
+        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
