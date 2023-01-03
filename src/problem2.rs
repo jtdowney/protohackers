@@ -1,8 +1,13 @@
 use std::collections::BTreeMap;
 
+use bytes::{BufMut, BytesMut};
 use eyre::bail;
+use futures::{SinkExt, StreamExt};
 use nom::{branch::alt, bytes::complete::tag, number::complete::be_i32, Finish, IResult};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::codec::{Decoder, Encoder, Framed};
+
+const PACKET_SIZE: usize = 9;
 
 #[derive(Debug)]
 enum Packet {
@@ -29,22 +34,48 @@ fn packet(input: &[u8]) -> IResult<&[u8], Packet> {
     Ok((input, packet))
 }
 
-pub async fn handle<T>(mut stream: T) -> eyre::Result<()>
+struct PacketCodec;
+
+impl Decoder for PacketCodec {
+    type Item = Packet;
+    type Error = eyre::Report;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < PACKET_SIZE {
+            return Ok(None);
+        }
+
+        let buffer = src.split_to(PACKET_SIZE);
+        match packet(&buffer).finish() {
+            Ok((_, p)) => Ok(Some(p)),
+            Err(e) => bail!("failed to parse {:?}: {:?}", buffer, e),
+        }
+    }
+}
+
+impl Encoder<i32> for PacketCodec {
+    type Error = eyre::Report;
+
+    fn encode(&mut self, item: i32, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.put_i32(item);
+        Ok(())
+    }
+}
+
+pub async fn handle<T>(stream: T) -> eyre::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut buf = [0; 9];
     let mut data = BTreeMap::new();
-    loop {
-        stream.read_exact(&mut buf).await?;
-
-        match packet(&buf).finish() {
-            Ok((_, Packet::Insert { timestamp, price })) => {
+    let mut framed = Framed::new(stream, PacketCodec);
+    while let Some(Ok(packet)) = framed.next().await {
+        match packet {
+            Packet::Insert { timestamp, price } => {
                 data.insert(timestamp, price);
             }
-            Ok((_, Packet::Query { start, end })) => {
+            Packet::Query { start, end } => {
                 if start > end {
-                    stream.write_i32(0).await?;
+                    framed.send(0).await?;
                     continue;
                 }
 
@@ -53,17 +84,18 @@ where
                     .map(|(_, &p)| p as isize)
                     .collect::<Vec<isize>>();
                 if items.is_empty() {
-                    stream.write_i32(0).await?;
+                    framed.send(0).await?;
                     continue;
                 }
 
                 let total = items.iter().sum::<isize>();
                 let mean = total / items.len() as isize;
-                stream.write_i32(mean as i32).await?;
+                framed.send(mean as i32).await?;
             }
-            Err(e) => bail!("failed to parse {:?}: {:?}", buf, e),
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

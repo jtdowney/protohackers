@@ -423,6 +423,7 @@ name = "protohackers"
 version = "0.1.0"
 dependencies = [
  "argh",
+ "bytes",
  "eyre",
  "futures",
  "nom",
@@ -432,7 +433,6 @@ dependencies = [
  "stable-eyre",
  "thiserror",
  "tokio",
- "tokio-stream",
  "tokio-test",
  "tokio-util",
  "tracing",

@@ -1,7 +1,6 @@
-use futures::SinkExt;
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncWrite};
-use tokio_stream::StreamExt;
 use tokio_util::codec::{Framed, LinesCodec};
 
 #[derive(Deserialize, Debug)]
