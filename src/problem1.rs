@@ -1,6 +1,6 @@
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LinesCodec};
 
 #[derive(Deserialize, Debug)]
@@ -17,7 +17,7 @@ struct Response {
 
 async fn malformed_request<T>(framed: &mut Framed<T, LinesCodec>) -> eyre::Result<()>
 where
-    T: AsyncBufRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     framed.send("malformed request").await?;
     Ok(())
@@ -25,7 +25,7 @@ where
 
 pub async fn handle<T>(stream: T) -> eyre::Result<()>
 where
-    T: AsyncBufRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut framed = Framed::new(stream, LinesCodec::new());
     while let Some(Ok(line)) = framed.next().await {
