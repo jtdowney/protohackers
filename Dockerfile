@@ -19,7 +19,4 @@ FROM debian:bullseye-slim
 
 COPY --from=builder /usr/src/target/release/protohackers /usr/bin
 USER nobody
-EXPOSE 9000
-EXPOSE 9001
-EXPOSE 9002
 CMD ["/usr/bin/protohackers"]
