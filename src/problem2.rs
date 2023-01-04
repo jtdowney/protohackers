@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::bail;
 use bytes::{BufMut, BytesMut};
-use futures::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use nom::{branch::alt, bytes::complete::tag, number::complete::be_i32, Finish, IResult};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};

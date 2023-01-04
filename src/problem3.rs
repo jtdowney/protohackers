@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use anyhow::bail;
-use futures::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, Mutex},

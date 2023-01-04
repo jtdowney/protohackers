@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use futures::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LinesCodec};
