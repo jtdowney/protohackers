@@ -2,17 +2,19 @@ mod problem0;
 mod problem1;
 mod problem2;
 mod problem3;
+mod problem4;
 mod proxy;
 
 use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
 };
 
 use argh::FromArgs;
 use tokio::{
     io::BufReader,
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpStream, UdpSocket},
 };
 use tracing::{debug, info, warn};
 
@@ -44,8 +46,9 @@ async fn main() -> eyre::Result<()> {
     let problem1 = tokio::spawn(create_server(port + 1, proxy_protocol, problem1::handle));
     let problem2 = tokio::spawn(create_server(port + 2, proxy_protocol, problem2::handle));
     let problem3 = tokio::spawn(create_server(port + 3, proxy_protocol, problem3::handle));
+    let problem4 = tokio::spawn(create_udp_server(port + 4, problem4::handle));
 
-    let _ = tokio::join!(problem0, problem1, problem2, problem3);
+    let _ = tokio::join!(problem0, problem1, problem2, problem3, problem4);
 
     Ok(())
 }
@@ -83,6 +86,35 @@ where
             info!("connection from {addr}");
 
             if let Err(e) = handle(stream, addr, state).await {
+                warn!(error = ?e, "error handling client");
+            }
+        });
+    }
+}
+
+async fn create_udp_server<F, Fut, S>(port: u16, handle: F) -> eyre::Result<()>
+where
+    F: Fn(Arc<UdpSocket>, Vec<u8>, SocketAddr, S) -> Fut + Send + Sync + Copy + 'static,
+    Fut: Future<Output = eyre::Result<()>> + Send + 'static,
+    S: Default + Send + Sync + Clone + 'static,
+{
+    let bind = (Ipv4Addr::UNSPECIFIED, port);
+    let socket = Arc::new(UdpSocket::bind(bind).await?);
+    info!("listening on on {bind:?}");
+
+    let state = S::default();
+
+    loop {
+        let socket = socket.clone();
+        let mut buffer = [0; 1000];
+        let (n, addr) = socket.recv_from(&mut buffer).await?;
+        let data = buffer[0..n].to_vec();
+
+        let state = state.clone();
+        tokio::spawn(async move {
+            info!("{n} byte datagram from {addr}");
+
+            if let Err(e) = handle(socket, data, addr, state).await {
                 warn!(error = ?e, "error handling client");
             }
         });
