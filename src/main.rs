@@ -1,8 +1,10 @@
+mod codec;
 mod problem0;
 mod problem1;
 mod problem2;
 mod problem3;
 mod problem4;
+mod problem5;
 
 use std::{
     future::Future,
@@ -33,8 +35,9 @@ async fn main() -> anyhow::Result<()> {
     let problem2 = tokio::spawn(create_server(port + 2, problem2::handle));
     let problem3 = tokio::spawn(create_server(port + 3, problem3::handle));
     let problem4 = tokio::spawn(create_udp_server(port + 4, problem4::handle));
+    let problem5 = tokio::spawn(create_server(port + 5, problem5::handle));
 
-    let _ = tokio::join!(problem0, problem1, problem2, problem3, problem4);
+    let _ = tokio::join!(problem0, problem1, problem2, problem3, problem4, problem5);
 
     Ok(())
 }

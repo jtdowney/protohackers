@@ -6,7 +6,9 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, Mutex},
 };
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::Framed;
+
+use crate::codec::StrictLinesCodec;
 
 pub struct Peer {
     tx: mpsc::UnboundedSender<String>,
@@ -34,7 +36,7 @@ pub async fn handle<T>(stream: T, addr: SocketAddr, state: Arc<Mutex<State>>) ->
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut framed = Framed::new(stream, LinesCodec::new());
+    let mut framed = Framed::new(stream, StrictLinesCodec::default());
     framed
         .send("Welcome to budgetchat! What shall I call you?")
         .await?;
