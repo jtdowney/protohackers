@@ -1,6 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
-use eyre::bail;
+use anyhow::bail;
 use futures::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -19,7 +19,7 @@ pub struct State {
 }
 
 impl State {
-    async fn broadcast(&mut self, sender: SocketAddr, message: &str) -> eyre::Result<()> {
+    async fn broadcast(&mut self, sender: SocketAddr, message: &str) -> anyhow::Result<()> {
         for (&addr, Peer { tx, .. }) in self.peers.iter_mut() {
             if addr != sender {
                 tx.send(message.into())?;
@@ -30,7 +30,7 @@ impl State {
     }
 }
 
-pub async fn handle<T>(stream: T, addr: SocketAddr, state: Arc<Mutex<State>>) -> eyre::Result<()>
+pub async fn handle<T>(stream: T, addr: SocketAddr, state: Arc<Mutex<State>>) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -106,7 +106,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn single_user_session() -> eyre::Result<()> {
+    async fn single_user_session() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .write(b"Welcome to budgetchat! What shall I call you?\n")
             .read(b"user1\n")

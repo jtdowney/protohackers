@@ -17,7 +17,7 @@ struct Response {
     prime: bool,
 }
 
-async fn malformed_request<T>(framed: &mut Framed<T, LinesCodec>) -> eyre::Result<()>
+async fn malformed_request<T>(framed: &mut Framed<T, LinesCodec>) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -25,7 +25,7 @@ where
     Ok(())
 }
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> eyre::Result<()>
+pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -60,7 +60,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn successful_request() -> eyre::Result<()> {
+    async fn successful_request() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":13}\n")
             .write(b"{\"method\":\"isPrime\",\"prime\":true}\n")
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsuccessful_request() -> eyre::Result<()> {
+    async fn unsuccessful_request() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":123}\n")
             .write(b"{\"method\":\"isPrime\",\"prime\":false}\n")
@@ -86,7 +86,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bad_json() -> eyre::Result<()> {
+    async fn bad_json() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\"\",\"number\":123}\n")
             .write(b"malformed request\n")
@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bad_method() -> eyre::Result<()> {
+    async fn bad_method() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"test\",\"number\":123}\n")
             .write(b"malformed request\n")
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bad_number() -> eyre::Result<()> {
+    async fn bad_number() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":\"123\"}\n")
             .write(b"malformed request\n")
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn float() -> eyre::Result<()> {
+    async fn float() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":3.14}\n")
             .write(b"{\"method\":\"isPrime\",\"prime\":false}\n")
@@ -138,7 +138,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ignores_extra_fields() -> eyre::Result<()> {
+    async fn ignores_extra_fields() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":13,\"extra\":true}\n")
             .write(b"{\"method\":\"isPrime\",\"prime\":true}\n")

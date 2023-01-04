@@ -23,9 +23,8 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    stable_eyre::install()?;
 
     let Args { port } = argh::from_env();
 
@@ -40,10 +39,10 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
-async fn create_server<F, Fut, S>(port: u16, handle: F) -> eyre::Result<()>
+async fn create_server<F, Fut, S>(port: u16, handle: F) -> anyhow::Result<()>
 where
     F: Fn(TcpStream, SocketAddr, S) -> Fut + Send + Sync + Copy + 'static,
-    Fut: Future<Output = eyre::Result<()>> + Send + 'static,
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     S: Default + Send + Sync + Clone + 'static,
 {
     let bind = (Ipv4Addr::UNSPECIFIED, port);
@@ -65,10 +64,10 @@ where
     }
 }
 
-async fn create_udp_server<F, Fut, S>(port: u16, handle: F) -> eyre::Result<()>
+async fn create_udp_server<F, Fut, S>(port: u16, handle: F) -> anyhow::Result<()>
 where
     F: Fn(Arc<UdpSocket>, Vec<u8>, SocketAddr, S) -> Fut + Send + Sync + Copy + 'static,
-    Fut: Future<Output = eyre::Result<()>> + Send + 'static,
+    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     S: Default + Send + Sync + Clone + 'static,
 {
     let bind = (Ipv4Addr::UNSPECIFIED, port);

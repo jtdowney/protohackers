@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
+use anyhow::bail;
 use bytes::{BufMut, BytesMut};
-use eyre::bail;
 use futures::{SinkExt, StreamExt};
 use nom::{branch::alt, bytes::complete::tag, number::complete::be_i32, Finish, IResult};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -38,7 +38,7 @@ struct PacketCodec;
 
 impl Decoder for PacketCodec {
     type Item = Packet;
-    type Error = eyre::Report;
+    type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if src.len() < PACKET_SIZE {
@@ -54,7 +54,7 @@ impl Decoder for PacketCodec {
 }
 
 impl Encoder<i32> for PacketCodec {
-    type Error = eyre::Report;
+    type Error = anyhow::Error;
 
     fn encode(&mut self, item: i32, dst: &mut BytesMut) -> Result<(), Self::Error> {
         dst.put_i32(item);
@@ -62,7 +62,7 @@ impl Encoder<i32> for PacketCodec {
     }
 }
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> eyre::Result<()>
+pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -103,7 +103,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn example_session() -> eyre::Result<()> {
+    async fn example_session() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"I\x00\x00\x30\x39\x00\x00\x00\x65")
             .read(b"I\x00\x00\x30\x3a\x00\x00\x00\x66")
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn zero_items() -> eyre::Result<()> {
+    async fn zero_items() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"Q\x00\x00\x30\x00\x00\x00\x40\x00")
             .write(b"\x00\x00\x00\x00")
@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bad_range() -> eyre::Result<()> {
+    async fn bad_range() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"I\x00\x00\x30\x39\x00\x00\x00\x65")
             .read(b"I\x00\x00\x30\x3a\x00\x00\x00\x66")

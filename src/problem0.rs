@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub async fn handle<T>(mut stream: T, _addr: SocketAddr, _state: ()) -> eyre::Result<()>
+pub async fn handle<T>(mut stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
@@ -24,7 +24,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn echo() -> eyre::Result<()> {
+    async fn echo() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"test123")
             .write(b"test123")

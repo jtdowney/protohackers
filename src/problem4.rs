@@ -9,7 +9,7 @@ pub async fn handle(
     data: Vec<u8>,
     addr: SocketAddr,
     state: Arc<Mutex<HashMap<String, String>>>,
-) -> eyre::Result<()> {
+) -> anyhow::Result<()> {
     let data = String::from_utf8(data)?;
 
     match (data.as_str(), data.split_once('=')) {
