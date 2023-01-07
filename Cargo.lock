@@ -466,6 +466,7 @@ dependencies = [
  "futures-util",
  "nom",
  "primes",
+ "rand",
  "serde",
  "serde_json",
  "tokio",
