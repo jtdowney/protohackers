@@ -1,57 +1,39 @@
+mod codec;
+
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     future,
     net::SocketAddr,
     sync::Arc,
     time::Duration,
 };
 
-use anyhow::bail;
-use bytes::{Buf, BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
-use nom::{
-    branch::alt,
-    bytes::streaming::tag,
-    combinator::{consumed, map, map_res},
-    multi::{length_count, length_data},
-    number::streaming::{be_u16, be_u32, be_u8},
-    sequence::{preceded, tuple},
-    IResult,
-};
+use itertools::Itertools;
 use rand::prelude::*;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, Mutex, Semaphore},
     time::{Instant, Interval},
 };
-use tokio_util::codec::{Decoder, Encoder, Framed};
+use tokio_util::codec::Framed;
 use tracing::{debug, trace, warn};
 
-type Road = u16;
-type Timestamp = u32;
+use crate::problem6::codec::{ServerError, ServerHeartbeat};
 
-struct ServerError<'a> {
-    message: &'a str,
-}
+use self::codec::{ClientMessage, SpeedDaemonCodec};
 
-struct ServerHeartbeat;
-
-enum ClientMessage {
-    Plate { plate: String, timestamp: Timestamp },
-    WantHeartbeat { interval: u32 },
-    IAmCamera { road: Road, mile: u16, limit: u16 },
-    IAmDispatcher { roads: Vec<Road> },
-}
+pub type Road = u16;
+pub type Timestamp = u32;
 
 #[derive(Copy, Clone, Debug)]
-struct Camera {
-    road: Road,
+pub struct Camera {
     mile: u16,
     limit: u16,
 }
 
 #[derive(Clone, Debug)]
-struct Ticket {
+pub struct Ticket {
     plate: String,
     road: Road,
     mile1: u16,
@@ -65,7 +47,7 @@ struct Ticket {
 pub struct State {
     dispatchers: HashMap<Road, Vec<(SocketAddr, mpsc::UnboundedSender<Ticket>)>>,
     pending_tickets: Vec<Ticket>,
-    observations: HashMap<String, BTreeMap<Timestamp, Camera>>,
+    observations: HashMap<(String, Road), Vec<(Timestamp, Camera)>>,
     existing_tickets: HashMap<String, HashSet<Timestamp>>,
     locked_plate: HashMap<String, Arc<Semaphore>>,
 }
@@ -91,10 +73,10 @@ where
         tokio::select! {
             result = framed.next() => match result {
                 Some(Ok(message)) => handle_client_message(message, addr, state.clone(), &mut framed, &mut role, &mut heartbeat).await?,
-                Some(Err(_)) => framed.send(ServerError { message: "unable to parse message" }).await?,
+                Some(Err(_)) => framed.send(ServerError::from("unable to parse message")).await?,
                 None => break,
             },
-            maybe_ticket = dispatch_ticket(&mut role) => match maybe_ticket {
+            ticket = dispatch_ticket(&mut role) => match ticket {
                 Some(ticket) => framed.send(ticket).await?,
                 None => continue,
             },
@@ -141,7 +123,7 @@ where
     match (message, role) {
         (ClientMessage::Plate { plate, timestamp }, &mut Role::Camera { road, mile, limit }) => {
             trace!("[{}] {} seen at {}", addr, plate, timestamp);
-            let camera = Camera { road, mile, limit };
+            let camera = Camera { mile, limit };
             {
                 let mut state = state.lock().await;
                 state
@@ -150,19 +132,17 @@ where
                     .or_insert_with(|| Arc::new(Semaphore::new(1)));
                 state
                     .observations
-                    .entry(plate.clone())
+                    .entry((plate.clone(), road))
                     .or_default()
-                    .insert(timestamp, camera);
+                    .push((timestamp, camera));
             }
 
-            check_for_ticket(state, plate, timestamp, camera).await?;
+            check_for_ticket(state, plate, road).await?;
         }
         (ClientMessage::Plate { .. }, role) => {
             warn!("[{}] with {:?} tried to send a plate", addr, role);
             framed
-                .send(ServerError {
-                    message: "only cameras can send plates",
-                })
+                .send(ServerError::from("only cameras can send plates"))
                 .await?;
         }
         (ClientMessage::IAmCamera { road, mile, limit }, role @ Role::Unknown) => {
@@ -171,11 +151,7 @@ where
         }
         (ClientMessage::IAmCamera { .. }, role) => {
             warn!("[{}] with {:?} tried to identify as a camera", addr, role);
-            framed
-                .send(ServerError {
-                    message: "already identified",
-                })
-                .await?;
+            framed.send(ServerError::from("already identified")).await?;
         }
         (ClientMessage::IAmDispatcher { roads }, role @ Role::Unknown) => {
             let (tx, rx) = mpsc::unbounded_channel();
@@ -214,11 +190,7 @@ where
                 "[{}] with {:?} tried to identify as a dispatcher",
                 addr, role
             );
-            framed
-                .send(ServerError {
-                    message: "already identified",
-                })
-                .await?;
+            framed.send(ServerError::from("already identified")).await?;
         }
         (ClientMessage::WantHeartbeat { interval }, _) => {
             if interval == 0 {
@@ -236,12 +208,7 @@ where
     Ok(())
 }
 
-async fn check_for_ticket(
-    state: SharedState,
-    plate: String,
-    timestamp: Timestamp,
-    camera: Camera,
-) -> anyhow::Result<()> {
+async fn check_for_ticket(state: SharedState, plate: String, road: Road) -> anyhow::Result<()> {
     let semaphore = {
         let state = state.lock().await;
         state.locked_plate[&plate].clone()
@@ -250,60 +217,81 @@ async fn check_for_ticket(
     let _permit = semaphore.acquire().await?;
     trace!("acquiring lock for {}", plate);
 
-    let other_observations = {
+    let (observations, existing_dates) = {
         let state = state.lock().await;
-        state.observations.get(&plate).map(|obs| {
-            let prev = obs.range(..timestamp).map(|(&t, &c)| (t, c)).next_back();
-            let next = obs.range((timestamp + 1)..).map(|(&t, &c)| (t, c)).next();
-            (prev, next)
-        })
+        let observations = state
+            .observations
+            .get(&(plate.clone(), road))
+            .cloned()
+            .unwrap_or_default();
+        let existing_dates = state
+            .existing_tickets
+            .get(&plate)
+            .cloned()
+            .unwrap_or_default();
+        (observations, existing_dates)
     };
 
-    let maybe_ticket = other_observations.and_then(|(prev, next)| {
-        let cmph_limit = camera.limit as u32 * 100;
-        let current = Some((timestamp, camera));
-        let first = prev.zip(current);
-        let second = current.zip(next);
-        [first, second]
-            .iter()
-            .filter_map(|&pair| pair)
-            .find_map(|((ta, ca), (tb, cb))| {
-                let centimiles_traveled = (ca.mile as i32 - cb.mile as i32).unsigned_abs() * 100;
-                let time_traveled = tb - ta;
-                let cmph_traveled = (f64::from(centimiles_traveled) / f64::from(time_traveled)
-                    * 60.0
-                    * 60.0) as u32;
+    let speeding_ticket = observations
+        .into_iter()
+        .filter(|&(t, _)| {
+            let date = timestamp_to_date(t);
+            !existing_dates.contains(&date)
+        })
+        .tuple_combinations()
+        .find_map(|((ta, ca), (tb, cb))| {
+            let speed = check_speed(ta, ca, tb, cb)?;
+            let (timestamp1, mile1, timestamp2, mile2) = if ta < tb {
+                (ta, ca.mile, tb, cb.mile)
+            } else {
+                (tb, cb.mile, ta, ca.mile)
+            };
 
-                trace!(
-                    centimiles_traveled,
-                    time_traveled,
-                    cmph_traveled,
-                    cmph_limit,
-                    "checking"
-                );
+            let ticket = Ticket {
+                plate: plate.clone(),
+                road,
+                mile1,
+                timestamp1,
+                mile2,
+                timestamp2,
+                speed,
+            };
 
-                if cmph_traveled > cmph_limit {
-                    let ticket = Ticket {
-                        plate: plate.clone(),
-                        road: ca.road,
-                        mile1: ca.mile,
-                        timestamp1: ta,
-                        mile2: cb.mile,
-                        timestamp2: tb,
-                        speed: cmph_traveled as u16,
-                    };
-                    Some(ticket)
-                } else {
-                    None
-                }
-            })
-    });
+            Some(ticket)
+        });
 
-    if let Some(ticket) = maybe_ticket {
+    if let Some(ticket) = speeding_ticket {
         issue_ticket(state.clone(), ticket).await?
     }
 
     Ok(())
+}
+
+fn check_speed(
+    timestamp1: Timestamp,
+    camera1: Camera,
+    timestamp2: Timestamp,
+    camera2: Camera,
+) -> Option<u16> {
+    let cmph_limit = camera1.limit as u32 * 100;
+    let centimiles_traveled = (camera1.mile as i32 - camera2.mile as i32).unsigned_abs() * 100;
+    let time_traveled = (timestamp1 as i64 - timestamp2 as i64).unsigned_abs() as u32;
+    let cmph_traveled =
+        (f64::from(centimiles_traveled) / f64::from(time_traveled) * 60.0 * 60.0) as u32;
+
+    trace!(
+        centimiles_traveled,
+        time_traveled,
+        cmph_traveled,
+        cmph_limit,
+        "checking"
+    );
+
+    if cmph_traveled > cmph_limit {
+        Some(cmph_traveled as u16)
+    } else {
+        None
+    }
 }
 
 async fn issue_ticket(
@@ -315,37 +303,11 @@ async fn issue_ticket(
         ..
     }: Ticket,
 ) -> anyhow::Result<()> {
-    let dates = [timestamp1, timestamp2].map(|t| (f64::from(t) / 86400.0) as u32);
+    let dates = [timestamp1, timestamp2].map(timestamp_to_date);
 
-    let existing_tickets = {
-        let state = state.lock().await;
-        state
-            .existing_tickets
-            .get(&ticket.plate)
-            .map(|ticket_dates| {
-                let [a, b] = dates;
-                ticket_dates.contains(&a) || ticket_dates.contains(&b)
-            })
-            .unwrap_or_default()
-    };
-
-    trace!(?dates, "checking existing tickets for {}", ticket.plate);
-
-    if existing_tickets {
-        debug!(
-            "skipping ticket for {} due to recent ticket on {:?}",
-            ticket.plate, dates
-        );
-        return Ok(());
-    }
-
-    let dates = [timestamp1, timestamp2]
-        .iter()
-        .map(|&t| (f64::from(t) / 86400.0) as u32)
-        .collect::<HashSet<_>>();
     debug!(?ticket, "issuing ticket for {:?}", dates);
 
-    let maybe_dispatcher = {
+    let dispatcher = {
         let mut state = state.lock().await;
         state
             .existing_tickets
@@ -361,7 +323,7 @@ async fn issue_ticket(
             .cloned()
     };
 
-    if let Some((_, tx)) = maybe_dispatcher {
+    if let Some((_, tx)) = dispatcher {
         trace!("sending ticket to a dispatcher");
         tx.send(ticket)?;
     } else {
@@ -377,110 +339,10 @@ async fn heartbeat_tick(maybe_heartbeat: Option<&mut Interval>) -> Instant {
     if let Some(heartbeat) = maybe_heartbeat {
         heartbeat.tick().await
     } else {
-        future::pending::<Instant>().await
+        future::pending().await
     }
 }
 
-fn str(input: &[u8]) -> IResult<&[u8], String> {
-    map_res(length_data(be_u8), |data| {
-        std::str::from_utf8(data).map(String::from)
-    })(input)
-}
-
-fn client_message(input: &[u8]) -> IResult<&[u8], ClientMessage> {
-    let plate = map(
-        preceded(tag(b"\x20"), tuple((str, be_u32))),
-        |(plate, timestamp)| ClientMessage::Plate { plate, timestamp },
-    );
-    let want_heartbeat = map(preceded(tag(b"\x40"), be_u32), |interval| {
-        ClientMessage::WantHeartbeat { interval }
-    });
-    let i_am_camera = map(
-        preceded(tag(b"\x80"), tuple((be_u16, be_u16, be_u16))),
-        |(road, mile, limit)| ClientMessage::IAmCamera { road, mile, limit },
-    );
-    let i_am_dispatcher = map(
-        preceded(tag(b"\x81"), length_count(be_u8, be_u16)),
-        |roads| ClientMessage::IAmDispatcher { roads },
-    );
-
-    alt((plate, want_heartbeat, i_am_camera, i_am_dispatcher))(input)
-}
-
-struct SpeedDaemonCodec;
-
-impl Decoder for SpeedDaemonCodec {
-    type Item = ClientMessage;
-    type Error = anyhow::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let used_length;
-        let message = match consumed(client_message)(src) {
-            Ok((_, (raw, message))) => {
-                used_length = raw.len();
-                message
-            }
-            Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => bail!("error parsing {:?}: {}", src, e),
-        };
-
-        src.advance(used_length);
-        Ok(Some(message))
-    }
-}
-
-impl Encoder<Ticket> for SpeedDaemonCodec {
-    type Error = anyhow::Error;
-
-    fn encode(
-        &mut self,
-        Ticket {
-            plate,
-            road,
-            mile1,
-            timestamp1,
-            mile2,
-            timestamp2,
-            speed,
-        }: Ticket,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        dst.put_u8(0x21);
-        dst.put_u8(plate.len() as u8);
-        dst.put_slice(plate.as_bytes());
-        dst.put_u16(road);
-        dst.put_u16(mile1);
-        dst.put_u32(timestamp1);
-        dst.put_u16(mile2);
-        dst.put_u32(timestamp2);
-        dst.put_u16(speed);
-
-        Ok(())
-    }
-}
-
-impl Encoder<ServerHeartbeat> for SpeedDaemonCodec {
-    type Error = anyhow::Error;
-
-    fn encode(&mut self, _item: ServerHeartbeat, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.put_u8(0x41);
-
-        Ok(())
-    }
-}
-
-impl<'a> Encoder<ServerError<'a>> for SpeedDaemonCodec {
-    type Error = anyhow::Error;
-
-    fn encode(
-        &mut self,
-        ServerError { message }: ServerError<'a>,
-        dst: &mut BytesMut,
-    ) -> Result<(), Self::Error> {
-        dst.put_u8(0x10);
-        dst.put_u8(message.len() as u8);
-        dst.put_slice(message.as_bytes());
-
-        Ok(())
-    }
+fn timestamp_to_date(timestamp: Timestamp) -> u32 {
+    (f64::from(timestamp) / 86400.0).floor() as u32
 }
