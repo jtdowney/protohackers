@@ -4,10 +4,12 @@ use std::{
     sync::Arc,
 };
 
-use tokio::{net::UdpSocket, sync::Mutex};
-use tracing::{info, warn};
+use parking_lot::Mutex;
+use tokio::net::UdpSocket;
+use tracing::{info, trace, warn};
 
-type SharedState = Arc<Mutex<HashMap<String, String>>>;
+type State = HashMap<String, String>;
+type SharedState = Arc<Mutex<State>>;
 
 const VERSION: &str = "jtdowney protohackers";
 
@@ -26,7 +28,7 @@ pub async fn start(port: u16) -> anyhow::Result<()> {
 
         let state = state.clone();
         tokio::spawn(async move {
-            info!("{n} byte datagram from {addr}");
+            trace!("{n} byte datagram from {addr}");
 
             if let Err(e) = handle(socket, data, addr, state).await {
                 warn!(error = ?e, "error handling client");
@@ -39,7 +41,7 @@ async fn handle(
     socket: Arc<UdpSocket>,
     data: Vec<u8>,
     addr: SocketAddr,
-    state: Arc<Mutex<HashMap<String, String>>>,
+    state: SharedState,
 ) -> anyhow::Result<()> {
     let data = String::from_utf8(data)?;
 
@@ -47,7 +49,7 @@ async fn handle(
         (_, Some((key, value))) => {
             let key = key.to_owned();
             let value = value.to_owned();
-            let mut state = state.lock().await;
+            let mut state = state.lock();
             state.insert(key, value);
         }
         ("version", None) => {
@@ -56,7 +58,7 @@ async fn handle(
         }
         (key, None) => {
             let entry = {
-                let state = state.lock().await;
+                let state = state.lock();
                 state.get(key).cloned()
             };
 

@@ -10,10 +10,11 @@ use std::{
 
 use futures_util::{SinkExt, StreamExt};
 use itertools::Itertools;
+use parking_lot::Mutex;
 use rand::prelude::*;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, Mutex, Semaphore},
+    sync::{mpsc, Semaphore},
     time::{Instant, Interval},
 };
 use tokio_util::codec::Framed;
@@ -87,7 +88,7 @@ where
     }
 
     if let Role::Dispatcher { .. } = role {
-        let mut state = state.lock().await;
+        let mut state = state.lock();
 
         for (_, dispatchers) in state.dispatchers.iter_mut() {
             dispatchers.retain(|&(dispatcher_addr, _)| dispatcher_addr != addr)
@@ -125,7 +126,7 @@ where
             trace!("[{}] {} seen at {}", addr, plate, timestamp);
             let camera = Camera { mile, limit };
             {
-                let mut state = state.lock().await;
+                let mut state = state.lock();
                 state
                     .locked_plate
                     .entry(plate.clone())
@@ -156,7 +157,7 @@ where
         (ClientMessage::IAmDispatcher { roads }, role @ Role::Unknown) => {
             let (tx, rx) = mpsc::unbounded_channel();
             {
-                let mut state = state.lock().await;
+                let mut state = state.lock();
                 for &road in &roads {
                     debug!("[{}] registering dispatcher for road {}", addr, road);
                     state
@@ -168,7 +169,7 @@ where
             }
 
             let tickets = {
-                let mut state = state.lock().await;
+                let mut state = state.lock();
                 let tickets = state
                     .pending_tickets
                     .iter()
@@ -210,7 +211,7 @@ where
 
 async fn check_for_ticket(state: SharedState, plate: String, road: Road) -> anyhow::Result<()> {
     let semaphore = {
-        let state = state.lock().await;
+        let state = state.lock();
         state.locked_plate[&plate].clone()
     };
 
@@ -218,7 +219,7 @@ async fn check_for_ticket(state: SharedState, plate: String, road: Road) -> anyh
     trace!("acquiring lock for {}", plate);
 
     let (observations, existing_dates) = {
-        let state = state.lock().await;
+        let state = state.lock();
         let observations = state
             .observations
             .get(&(plate.clone(), road))
@@ -308,7 +309,7 @@ async fn issue_ticket(
     debug!(?ticket, "issuing ticket for {:?}", dates);
 
     let dispatcher = {
-        let mut state = state.lock().await;
+        let mut state = state.lock();
         state
             .existing_tickets
             .entry(ticket.plate.clone())
@@ -328,7 +329,7 @@ async fn issue_ticket(
         tx.send(ticket)?;
     } else {
         trace!(?ticket, "unable to dispatch ticket, saving");
-        let mut state = state.lock().await;
+        let mut state = state.lock();
         state.pending_tickets.push(ticket);
     }
 
