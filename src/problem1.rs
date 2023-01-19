@@ -3,7 +3,9 @@ use std::net::SocketAddr;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::Framed;
+
+use crate::codec::JsonLinesCodec;
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -17,11 +19,18 @@ struct Response {
     prime: bool,
 }
 
-async fn malformed_request<T>(framed: &mut Framed<T, LinesCodec>) -> anyhow::Result<()>
+async fn malformed_request<T>(
+    framed: &mut Framed<T, JsonLinesCodec<Request, Response>>,
+) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    framed.send("malformed request").await?;
+    framed
+        .send(Response {
+            method: "error".into(),
+            prime: false,
+        })
+        .await?;
     Ok(())
 }
 
@@ -29,14 +38,15 @@ pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Resu
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut framed = Framed::new(stream, LinesCodec::new());
-    while let Some(Ok(line)) = framed.next().await {
-        let Request { method, number } = match serde_json::from_str(&line) {
-            Ok(Request { method, .. }) if method != "isPrime" => {
+    let mut framed = Framed::new(stream, JsonLinesCodec::<Request, Response>::default());
+    loop {
+        let Request { method, number } = match framed.next().await {
+            Some(Ok(Request { method, .. })) if method != "isPrime" => {
                 return malformed_request(&mut framed).await
             }
-            Err(_) => return malformed_request(&mut framed).await,
-            Ok(r) => r,
+            Some(Err(_)) => return malformed_request(&mut framed).await,
+            Some(Ok(r)) => r,
+            None => break,
         };
 
         let prime = if let Some(n) = number.as_u64() {
@@ -46,8 +56,7 @@ where
         };
 
         let response = Response { method, prime };
-        let data = serde_json::to_string(&response)?;
-        framed.send(&data).await?;
+        framed.send(response).await?;
     }
 
     Ok(())
@@ -89,7 +98,7 @@ mod tests {
     async fn bad_json() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\"\",\"number\":123}\n")
-            .write(b"malformed request\n")
+            .write(b"{\"method\":\"error\",\"prime\":false}\n")
             .build();
         let stream = BufReader::new(stream);
 
@@ -102,7 +111,7 @@ mod tests {
     async fn bad_method() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"test\",\"number\":123}\n")
-            .write(b"malformed request\n")
+            .write(b"{\"method\":\"error\",\"prime\":false}\n")
             .build();
         let stream = BufReader::new(stream);
 
@@ -115,7 +124,7 @@ mod tests {
     async fn bad_number() -> anyhow::Result<()> {
         let stream = tokio_test::io::Builder::new()
             .read(b"{\"method\":\"isPrime\",\"number\":\"123\"}\n")
-            .write(b"malformed request\n")
+            .write(b"{\"method\":\"error\",\"prime\":false}\n")
             .build();
         let stream = BufReader::new(stream);
 
