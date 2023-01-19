@@ -16,6 +16,7 @@ futures-util = { version = "0.3.25", features = ["sink"] }
 itertools = "0.10.5"
 nom = { version = "7.1.1", features = ["alloc"] }
 parking_lot = "0.12.1"
+pin-project = "1.0.12"
 primes = "0.3.0"
 rand = "0.8.5"
 serde = { version = "1.0.152", features = ["derive"] }

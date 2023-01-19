@@ -7,6 +7,7 @@ mod problem4;
 mod problem5;
 mod problem6;
 mod problem7;
+mod problem8;
 
 use std::{
     future::Future,
@@ -39,8 +40,11 @@ async fn main() -> anyhow::Result<()> {
     let server5 = tokio::spawn(create_server(port + 5, problem5::handle));
     let server6 = tokio::spawn(create_server(port + 6, problem6::handle));
     let server7 = tokio::spawn(problem7::start(port + 7));
+    let server8 = tokio::spawn(create_server(port + 8, problem8::handle));
 
-    let _ = tokio::join!(server0, server1, server2, server3, server4, server5, server6, server7);
+    let _ = tokio::join!(
+        server0, server1, server2, server3, server4, server5, server6, server7, server8
+    );
 
     Ok(())
 }
