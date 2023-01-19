@@ -71,15 +71,8 @@ pub struct Cipher {
 }
 
 impl Cipher {
-    pub fn new(spec: &[CipherOperation]) -> Self {
-        Self {
-            spec: spec.to_vec(),
-            position: 0,
-        }
-    }
-
     pub fn from_spec(buffer: &[u8]) -> anyhow::Result<Self> {
-        let spec = match cipher_spec(&buffer).finish() {
+        let spec = match cipher_spec(buffer).finish() {
             Ok((_, s)) => s,
             Err(e) => bail!("error parsing spec: {:?}", e),
         };
@@ -93,10 +86,6 @@ impl Cipher {
         self.seal_in_place(&mut data);
         self.position = saved_position;
         data == [0; 16]
-    }
-
-    pub fn reset_position(&mut self) {
-        self.position = 0;
     }
 
     pub fn seal_in_place(&mut self, buffer: &mut [u8]) {
@@ -188,40 +177,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cipher_encryption() {
-        let spec = [CipherOperation::Xor(1), CipherOperation::ReverseBits];
-        let mut cipher = Cipher::new(&spec);
+    fn cipher_encryption() -> anyhow::Result<()> {
+        let mut cipher = Cipher::from_spec(b"\x02\x01\x01\x00")?;
         let mut buffer = b"hello".to_vec();
         cipher.seal_in_place(&mut buffer);
         assert_eq!(b"\x96\x26\xb6\xb6\x76", buffer.as_slice());
 
-        let spec = [CipherOperation::AddPosition, CipherOperation::AddPosition];
-        let mut cipher = Cipher::new(&spec);
+        let mut cipher = Cipher::from_spec(b"\x05\x05\x00")?;
         let mut buffer = b"hello".to_vec();
         cipher.seal_in_place(&mut buffer);
         assert_eq!(b"\x68\x67\x70\x72\x77", buffer.as_slice());
+
+        Ok(())
     }
 
     #[test]
-    fn encryption_and_decryption() {
-        let spec = [
-            CipherOperation::Xor(50),
-            CipherOperation::ReverseBits,
-            CipherOperation::AddPosition,
-            CipherOperation::Add(128),
-            CipherOperation::XorPosition,
-            CipherOperation::ReverseBits,
-        ];
-        let mut cipher = Cipher::new(&spec);
+    fn encryption_and_decryption() -> anyhow::Result<()> {
+        let spec = b"\x02\x32\x01\x05\x04\x80\x03\x01\x00";
+        let mut cipher = Cipher::from_spec(spec)?;
         let plaintext = b"\xc6\xd3\xa7\x38\x1a\xbd\x54\x2a\xff\x13\x1f\xa5\x68\xa1\x22\x3c";
         let mut buffer = plaintext.to_vec();
 
         cipher.seal_in_place(&mut buffer);
         assert_ne!(plaintext, buffer.as_slice());
 
-        cipher.reset_position();
+        let mut cipher = Cipher::from_spec(spec)?;
         cipher.open_in_place(&mut buffer);
         assert_eq!(plaintext, buffer.as_slice());
+
+        Ok(())
     }
 
     #[tokio::test]
@@ -253,17 +237,16 @@ mod tests {
     }
 
     #[test]
-    fn check_noop() {
-        let spec = [CipherOperation::AddPosition, CipherOperation::AddPosition];
-        let mut cipher = Cipher::new(&spec);
+    fn check_noop() -> anyhow::Result<()> {
+        let mut cipher = Cipher::from_spec(b"\x05\x05\x00")?;
         assert!(!cipher.is_noop());
 
-        let spec = [];
-        let mut cipher = Cipher::new(&spec);
+        let mut cipher = Cipher::from_spec(b"\x00")?;
         assert!(cipher.is_noop());
 
-        let spec = [CipherOperation::Xor(0)];
-        let mut cipher = Cipher::new(&spec);
+        let mut cipher = Cipher::from_spec(b"\x02\x00\x00")?;
         assert!(cipher.is_noop());
+
+        Ok(())
     }
 }

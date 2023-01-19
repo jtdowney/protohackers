@@ -32,19 +32,18 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(10000));
-    loop {
-        match framed.next().await {
-            Some(Ok(line)) => {
+    while let Some(frame) = framed.next().await {
+        match frame {
+            Ok(line) => {
                 let reversed = line.chars().rev().collect::<String>();
                 trace!(?line, ?reversed, "received data");
 
                 framed.send(reversed).await?;
             }
-            Some(Err(e)) => {
+            Err(e) => {
                 warn!("error reading application frame: {}", e);
                 continue;
             }
-            None => break,
         }
     }
 

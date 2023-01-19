@@ -29,9 +29,9 @@ where
     let stream = CipherStream::new(stream, cipher);
     let mut framed = Framed::new(stream, LinesCodec::new());
 
-    loop {
-        match framed.next().await {
-            Some(Ok(line)) => {
+    while let Some(frame) = framed.next().await {
+        match frame {
+            Ok(line) => {
                 debug!(line, "got line");
                 let toys = line.split(',');
                 let max_toy = toys.max_by_key(|toy| {
@@ -49,10 +49,10 @@ where
                     break;
                 }
             }
-            Some(Err(e)) => {
+            Err(e) => {
                 warn!(error = ?e, "received error while reading frame");
+                break;
             }
-            None => break,
         }
     }
 
