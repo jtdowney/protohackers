@@ -12,7 +12,7 @@ use nom::{
     multi::fold_many0,
     number::complete::be_u8,
     sequence::preceded,
-    Finish, IResult,
+    IResult,
 };
 use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -110,6 +110,8 @@ impl Cipher {
 
     #[cfg(test)]
     pub fn from_spec(buffer: &[u8]) -> anyhow::Result<Self> {
+        use nom::Finish;
+
         let spec = match cipher_spec(buffer).finish() {
             Ok((_, s)) => s,
             Err(e) => bail!("error parsing spec: {:?}", e),

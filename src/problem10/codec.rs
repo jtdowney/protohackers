@@ -147,7 +147,7 @@ impl Decoder for VcsCodec {
                 let data = if let Some(index) = src.iter().position(|&b| b.is_ascii_whitespace()) {
                     &src[0..index]
                 } else {
-                    &src
+                    src
                 };
 
                 let word = str::from_utf8(data).map_err(|_| ParseError::MalformedString)?;
