@@ -1,20 +1,13 @@
 use std::net::SocketAddr;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 
-pub async fn handle<T>(mut stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
+pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut buffer = [0; 1024];
-    loop {
-        let n = stream.read(&mut buffer).await?;
-        if n == 0 {
-            break;
-        }
-
-        stream.write_all(&buffer[0..n]).await?;
-    }
+    let (mut rd, mut wr) = tokio::io::split(stream);
+    tokio::io::copy(&mut rd, &mut wr).await?;
 
     Ok(())
 }
