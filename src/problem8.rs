@@ -32,7 +32,7 @@ where
         ..
     } = framed.into_parts();
 
-    let mut cipher = Cipher::new(spec);
+    let mut cipher = Cipher::from_iter(spec);
     if cipher.is_noop() {
         warn!("noop cipher detected, disconnecting");
         return Ok(());

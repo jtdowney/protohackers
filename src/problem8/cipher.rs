@@ -103,11 +103,14 @@ pub struct Cipher {
     position: usize,
 }
 
-impl Cipher {
-    pub fn new(spec: Vec<CipherOperation>) -> Self {
+impl FromIterator<CipherOperation> for Cipher {
+    fn from_iter<T: IntoIterator<Item = CipherOperation>>(iter: T) -> Self {
+        let spec = iter.into_iter().collect();
         Self { spec, position: 0 }
     }
+}
 
+impl Cipher {
     #[cfg(test)]
     pub fn from_spec(buffer: &[u8]) -> anyhow::Result<Self> {
         use nom::Finish;
