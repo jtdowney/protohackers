@@ -16,6 +16,7 @@ use nom::{
 };
 use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_util::codec::Decoder;
 
 fn cipher_operation(input: &[u8]) -> IResult<&[u8], CipherOperation> {
     let reversebits = value(CipherOperation::ReverseBits, tag(b"\x01"));
@@ -33,7 +34,39 @@ fn cipher_spec(input: &[u8]) -> IResult<&[u8], Vec<CipherOperation>> {
     })(input)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Default)]
+pub struct CipherSpecCodec {
+    next_index: usize,
+}
+
+impl Decoder for CipherSpecCodec {
+    type Item = Vec<CipherOperation>;
+    type Error = anyhow::Error;
+
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let read_to = src.len();
+        let null_offset = src[self.next_index..read_to].iter().position(|&b| b == 0);
+
+        match null_offset {
+            Some(offset) => {
+                let newline_index = offset + self.next_index;
+                self.next_index = 0;
+                let input = src.split_to(newline_index + 1);
+                let input = &input[..input.len() - 1];
+                match cipher_spec(input) {
+                    Ok((_, spec)) => Ok(Some(spec)),
+                    Err(e) => bail!("error reading spec: {:?}", e),
+                }
+            }
+            None => {
+                self.next_index = read_to;
+                Ok(None)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum CipherOperation {
     ReverseBits,
     Xor(u8),
@@ -71,6 +104,11 @@ pub struct Cipher {
 }
 
 impl Cipher {
+    pub fn new(spec: Vec<CipherOperation>) -> Self {
+        Self { spec, position: 0 }
+    }
+
+    #[cfg(test)]
     pub fn from_spec(buffer: &[u8]) -> anyhow::Result<Self> {
         let spec = match cipher_spec(buffer).finish() {
             Ok((_, s)) => s,

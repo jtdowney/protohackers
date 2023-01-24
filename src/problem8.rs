@@ -2,33 +2,48 @@ mod cipher;
 
 use std::net::SocketAddr;
 
+use anyhow::bail;
 use futures_util::{SinkExt, StreamExt};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::codec::{Framed, FramedParts, LinesCodec};
 use tracing::{debug, trace, warn};
 
-use crate::problem8::cipher::Cipher;
-
-use self::cipher::CipherStream;
+use crate::problem8::cipher::{Cipher, CipherSpecCodec, CipherStream};
 
 pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut spec = vec![];
-    let mut stream = BufReader::new(stream);
-    stream.read_until(0, &mut spec).await?;
+    let mut framed = Framed::new(stream, CipherSpecCodec::default());
+    let spec = match framed.next().await {
+        Some(Ok(s)) => s,
+        Some(Err(e)) => {
+            bail!("error reading spec: {:?}", e);
+        }
+        None => todo!(),
+    };
+
     trace!(?spec, "read cipher spec");
 
-    let mut cipher = Cipher::from_spec(&spec)?;
+    let FramedParts {
+        io,
+        read_buf,
+        write_buf,
+        ..
+    } = framed.into_parts();
+
+    let mut cipher = Cipher::new(spec);
     if cipher.is_noop() {
         warn!("noop cipher detected, disconnecting");
         return Ok(());
     }
 
-    let stream = CipherStream::new(stream, cipher);
-    let mut framed = Framed::new(stream, LinesCodec::new());
+    let stream = CipherStream::new(io, cipher);
+    let mut parts = FramedParts::new::<String>(stream, LinesCodec::new());
+    parts.read_buf = read_buf;
+    parts.write_buf = write_buf;
 
+    let mut framed = Framed::from_parts(parts);
     while let Some(frame) = framed.next().await {
         match frame {
             Ok(line) => {
