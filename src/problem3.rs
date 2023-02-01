@@ -81,7 +81,7 @@ where
             result = framed.next() => match result {
                 Some(Ok(message)) => {
                     let mut state = state.lock().await;
-                    let message = format!("[{}] {}", username, message);
+                    let message = format!("[{username}] {message}");
                     state.broadcast(addr, &message).await?;
                 }
                 Some(Err(e)) => {
