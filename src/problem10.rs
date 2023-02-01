@@ -8,7 +8,7 @@ use std::{
 
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 use tracing::{debug, warn};
@@ -24,7 +24,7 @@ pub struct State {
     directories: HashMap<String, HashSet<String>>,
 }
 
-type SharedState = Arc<Mutex<State>>;
+type SharedState = Arc<RwLock<State>>;
 
 impl Default for State {
     fn default() -> Self {
@@ -53,7 +53,7 @@ where
                     debug!(file, revision, "getting file");
 
                     let data = {
-                        let state = state.lock();
+                        let state = state.read();
                         state
                             .files
                             .get(&file)
@@ -77,7 +77,7 @@ where
 
                     let hash: [u8; 32] = blake3::hash(&data).into();
                     {
-                        let mut state = state.lock();
+                        let mut state = state.write();
                         state.blobs.entry(hash).or_insert_with(|| data.into());
                     }
 
@@ -88,7 +88,7 @@ where
 
                     let mut path = String::from("/");
                     for part in parts {
-                        let mut state = state.lock();
+                        let mut state = state.write();
                         state
                             .directories
                             .entry(path.clone())
@@ -100,7 +100,7 @@ where
                     }
 
                     let revision = {
-                        let mut state = state.lock();
+                        let mut state = state.write();
                         state
                             .directories
                             .entry(path)
@@ -130,7 +130,7 @@ where
                     debug!(directory, "listing");
 
                     let mut entries = {
-                        let state = state.lock();
+                        let state = state.read();
                         state
                             .directories
                             .get(&directory)
