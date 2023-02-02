@@ -4,7 +4,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
-    T: AsyncRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite,
 {
     let (mut rd, mut wr) = tokio::io::split(stream);
     tokio::io::copy(&mut rd, &mut wr).await?;

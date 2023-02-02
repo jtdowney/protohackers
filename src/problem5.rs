@@ -15,7 +15,7 @@ const REPLACEMENT_ADDRESS: &str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
 pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
-    T: AsyncRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite,
 {
     let server = TcpStream::connect(UPSTREAM_ADDR).await?;
     let (server_tx, server_rx) = Framed::new(server, StrictLinesCodec::default()).split();
