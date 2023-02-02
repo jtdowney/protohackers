@@ -1,69 +1,41 @@
-use std::{net::SocketAddr, str};
+use std::net::SocketAddr;
 
-use anyhow::bail;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
+    try_join,
 };
 use tokio_util::codec::Framed;
-use trust_dns_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    AsyncResolver,
-};
 
 use crate::codec::StrictLinesCodec;
 
-const UPSTREAM_HOST: &str = "chat.protohackers.com";
-const UPSTREAM_PORT: u16 = 16963;
+const UPSTREAM_ADDR: &str = "chat.protohackers.com:16963";
 const REPLACEMENT_ADDRESS: &str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
 pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
-    let response = resolver.lookup_ip(UPSTREAM_HOST).await?;
+    let server = TcpStream::connect(UPSTREAM_ADDR).await?;
+    let (server_tx, server_rx) = Framed::new(server, StrictLinesCodec::default()).split();
+    let (client_tx, client_rx) = Framed::new(stream, StrictLinesCodec::default()).split();
 
-    let upstream_addrs = response
-        .iter()
-        .map(|ip| SocketAddr::new(ip, UPSTREAM_PORT))
-        .collect::<Vec<_>>();
-    let upstream = TcpStream::connect(upstream_addrs.as_slice()).await?;
+    let server_to_client = server_rx
+        .map(|msg| msg.map(rewrite_message))
+        .forward(client_tx);
+    let client_to_server = client_rx
+        .map(|msg| msg.map(rewrite_message))
+        .forward(server_tx);
 
-    let mut upstream = Framed::new(upstream, StrictLinesCodec::default());
-    let mut client = Framed::new(stream, StrictLinesCodec::default());
-
-    loop {
-        tokio::select! {
-            result = client.next() => match result {
-                Some(Ok(message)) => {
-                    let message = rewrite_message(&message);
-                    upstream.send(message).await?;
-                }
-                Some(Err(e)) => {
-                    bail!("an error occurred while processing client message; error = {:?}", e);
-                }
-                None => break,
-            },
-            result = upstream.next() => match result {
-                Some(Ok(message)) => {
-                    let message = rewrite_message(&message);
-                    client.send(message).await?;
-                }
-                Some(Err(e)) => {
-                    bail!("an error occurred while processing upstream message; error = {:?}", e);
-                }
-                None => break,
-            },
-        }
-    }
+    try_join!(server_to_client, client_to_server)?;
 
     Ok(())
 }
 
-fn rewrite_message(message: &str) -> String {
+fn rewrite_message<S: AsRef<str>>(message: S) -> String {
     message
+        .as_ref()
         .split(' ')
         .map(|part| {
             if is_boguscoin_address(part) {
