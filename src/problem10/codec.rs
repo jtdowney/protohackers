@@ -137,12 +137,12 @@ impl Decoder for VcsCodec {
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let parsed = consumed(parse_command)(src).map(|(_, (r, c))| (r.len(), c));
-        let result = match parsed {
+        match parsed {
             Ok((used_length, message)) => {
                 src.advance(used_length);
-                return Ok(Some(message));
+                Ok(Some(message))
             }
-            Err(nom::Err::Incomplete(_)) => return Ok(None),
+            Err(nom::Err::Incomplete(_)) => Ok(None),
             Err(_) => {
                 let data = if let Some(index) = src.iter().position(|&b| b.is_ascii_whitespace()) {
                     &src[0..index]
@@ -161,10 +161,7 @@ impl Decoder for VcsCodec {
 
                 Err(error)
             }
-        };
-
-        // src.clear();
-        result
+        }
     }
 }
 
