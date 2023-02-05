@@ -1,14 +1,22 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use anyhow::bail;
-use futures_util::{SinkExt, StreamExt};
+use futures_concurrency::stream::Merge;
+use futures_util::{stream, SinkExt, StreamExt};
+use parking_lot::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, Mutex},
+    sync::mpsc,
 };
 use tokio_util::codec::Framed;
 
 use crate::codec::StrictLinesCodec;
+
+enum Action {
+    SentMessage(String),
+    ReceivedMessage(String),
+    Disconnect,
+}
 
 pub struct Peer {
     tx: mpsc::UnboundedSender<String>,
@@ -20,8 +28,10 @@ pub struct State {
     peers: HashMap<SocketAddr, Peer>,
 }
 
+type SharedState = Arc<Mutex<State>>;
+
 impl State {
-    async fn broadcast(&mut self, sender: SocketAddr, message: &str) -> anyhow::Result<()> {
+    fn broadcast(&mut self, sender: SocketAddr, message: &str) -> anyhow::Result<()> {
         for (&addr, Peer { tx, .. }) in self.peers.iter_mut() {
             if addr != sender {
                 tx.send(message.into())?;
@@ -32,16 +42,16 @@ impl State {
     }
 }
 
-pub async fn handle<T>(stream: T, addr: SocketAddr, state: Arc<Mutex<State>>) -> anyhow::Result<()>
+pub async fn handle<T>(stream: T, addr: SocketAddr, state: SharedState) -> anyhow::Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut framed = Framed::new(stream, StrictLinesCodec::default());
-    framed
-        .send("Welcome to budgetchat! What shall I call you?")
+    let (mut framed_tx, mut framed_rx) = Framed::new(stream, StrictLinesCodec::default()).split();
+    framed_tx
+        .send("Welcome to budgetchat! What shall I call you?".into())
         .await?;
 
-    let Some(Ok(username)) = framed.next().await else {
+    let Some(Ok(username)) = framed_rx.next().await else {
         bail!("failed to get username");
     };
 
@@ -49,55 +59,68 @@ where
         bail!("invalid username {username:?}")
     }
 
-    {
-        let state = state.lock().await;
+    let message = {
+        let state = state.lock();
         let usernames = state
             .peers
             .values()
             .map(|Peer { username, .. }| username.as_str())
             .collect::<Vec<&str>>();
-        let message = format!("* The room contains: {}", usernames.join(", "));
-        framed.send(message).await?;
-    }
+        format!("* The room contains: {}", usernames.join(", "))
+    };
+    framed_tx.send(message).await?;
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, rx) = mpsc::unbounded_channel();
     {
-        let mut state = state.lock().await;
+        let mut state = state.lock();
         let username = username.clone();
         state.peers.insert(addr, Peer { tx, username });
     }
 
     {
-        let mut state = state.lock().await;
+        let mut state = state.lock();
         let message = format!("* {username} has entered the chat");
-        state.broadcast(addr, &message).await?;
+        state.broadcast(addr, &message)?;
     }
 
-    loop {
-        tokio::select! {
-            Some(message) = rx.recv() => {
-                framed.send(message).await?;
+    let rx_stream = stream::unfold(rx, |mut rx| async {
+        rx.recv().await.map(|message| (message, rx))
+    })
+    .map(|message| anyhow::Ok(Action::ReceivedMessage(message)));
+
+    let tx_stream = framed_rx
+        .map(|message| {
+            message.map(|message| Action::SentMessage(format!("[{username}] {message}")))
+        })
+        .chain(stream::once(async { Ok(Action::Disconnect) }));
+
+    let stream = (rx_stream, tx_stream).merge();
+    tokio::pin!(stream);
+
+    while let Some(action) = stream.next().await {
+        match action {
+            Ok(Action::ReceivedMessage(message)) => {
+                framed_tx.send(message).await?;
             }
-            result = framed.next() => match result {
-                Some(Ok(message)) => {
-                    let mut state = state.lock().await;
-                    let message = format!("[{username}] {message}");
-                    state.broadcast(addr, &message).await?;
-                }
-                Some(Err(e)) => {
-                    bail!("an error occurred while processing messages for {}; error = {:?}", username, e);
-                }
-                None => break,
-            },
+            Ok(Action::SentMessage(message)) => {
+                let mut state = state.lock();
+                state.broadcast(addr, &message)?;
+            }
+            Ok(Action::Disconnect) => break,
+            Err(e) => bail!(
+                "an error occurred while processing messages for {}; error = {:?}",
+                username,
+                e
+            ),
         }
     }
 
     {
-        let mut state = state.lock().await;
+        let mut state = state.lock();
         state.peers.remove(&addr);
 
         let message = format!("* {username} has left the chat");
-        state.broadcast(addr, &message).await?;
+        state.broadcast(addr, &message)?;
     }
 
     Ok(())
