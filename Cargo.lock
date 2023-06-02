@@ -493,7 +493,6 @@ dependencies = [
  "futures-util",
  "itertools",
  "nom",
- "once_cell",
  "parking_lot",
  "pin-project",
  "primes",
