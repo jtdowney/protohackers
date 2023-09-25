@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, pin::pin, sync::Arc};
 
 use anyhow::bail;
 use futures_concurrency::stream::Merge;
@@ -95,7 +95,7 @@ where
         .chain(stream::once(async { Ok(Action::Disconnect) }));
 
     let stream = (rx_stream, tx_stream).merge();
-    tokio::pin!(stream);
+    let mut stream = pin!(stream);
 
     while let Some(action) = stream.next().await {
         match action {
