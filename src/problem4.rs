@@ -1,15 +1,13 @@
 use std::{
-    collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
 };
 
-use parking_lot::Mutex;
 use tokio::net::UdpSocket;
 use tracing::{info, trace, warn};
 
-type State = HashMap<String, String>;
-type SharedState = Arc<Mutex<State>>;
+type State = lockfree::map::Map<String, String>;
+type SharedState = Arc<State>;
 
 const VERSION: &str = "jtdowney protohackers";
 
@@ -49,7 +47,6 @@ async fn handle(
         (_, Some((key, value))) => {
             let key = key.to_owned();
             let value = value.to_owned();
-            let mut state = state.lock();
             state.insert(key, value);
         }
         ("version", None) => {
@@ -57,11 +54,7 @@ async fn handle(
             socket.send_to(response.as_bytes(), addr).await?;
         }
         (key, None) => {
-            let entry = {
-                let state = state.lock();
-                state.get(key).cloned()
-            };
-
+            let entry = state.get(key).map(|guard| guard.val().to_owned());
             if let Some(value) = entry {
                 let response = format!("{key}={value}");
                 socket.send_to(response.as_bytes(), addr).await?;

@@ -1,9 +1,8 @@
-use std::{collections::HashMap, net::SocketAddr, pin::pin, sync::Arc};
+use std::{net::SocketAddr, pin::pin, sync::Arc};
 
 use anyhow::bail;
 use futures_concurrency::stream::Merge;
 use futures_util::{stream, SinkExt, StreamExt};
-use parking_lot::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,
@@ -25,14 +24,17 @@ pub struct Peer {
 
 #[derive(Default)]
 pub struct State {
-    peers: HashMap<SocketAddr, Peer>,
+    peers: lockfree::map::Map<SocketAddr, Peer>,
 }
 
-type SharedState = Arc<Mutex<State>>;
+type SharedState = Arc<State>;
 
 impl State {
-    fn broadcast(&mut self, sender: SocketAddr, message: &str) -> anyhow::Result<()> {
-        for (&addr, Peer { tx, .. }) in self.peers.iter_mut() {
+    fn broadcast(&self, sender: SocketAddr, message: &str) -> anyhow::Result<()> {
+        for guard in &self.peers {
+            let addr = *guard.key();
+            let Peer { tx, .. } = guard.val();
+
             if addr != sender {
                 tx.send(message.into())?;
             }
@@ -60,28 +62,26 @@ where
     }
 
     let message = {
-        let state = state.lock();
         let usernames = state
             .peers
-            .values()
-            .map(|Peer { username, .. }| username.as_str())
-            .collect::<Vec<&str>>();
+            .iter()
+            .map(|guard| guard.val().username.as_str().to_owned())
+            .collect::<Vec<String>>();
         format!("* The room contains: {}", usernames.join(", "))
     };
     framed_tx.send(message).await?;
 
     let (tx, rx) = mpsc::unbounded_channel();
-    {
-        let mut state = state.lock();
-        let username = username.clone();
-        state.peers.insert(addr, Peer { tx, username });
-    }
+    state.peers.insert(
+        addr,
+        Peer {
+            tx,
+            username: username.clone(),
+        },
+    );
 
-    {
-        let mut state = state.lock();
-        let message = format!("* {username} has entered the chat");
-        state.broadcast(addr, &message)?;
-    }
+    let message = format!("* {username} has entered the chat");
+    state.broadcast(addr, &message)?;
 
     let rx_stream = stream::unfold(rx, |mut rx| async {
         rx.recv().await.map(|message| (message, rx))
@@ -103,7 +103,6 @@ where
                 framed_tx.send(message).await?;
             }
             Ok(Action::SentMessage(message)) => {
-                let mut state = state.lock();
                 state.broadcast(addr, &message)?;
             }
             Ok(Action::Disconnect) => break,
@@ -115,13 +114,10 @@ where
         }
     }
 
-    {
-        let mut state = state.lock();
-        state.peers.remove(&addr);
+    state.peers.remove(&addr);
 
-        let message = format!("* {username} has left the chat");
-        state.broadcast(addr, &message)?;
-    }
+    let message = format!("* {username} has left the chat");
+    state.broadcast(addr, &message)?;
 
     Ok(())
 }
