@@ -1,19 +1,13 @@
-use std::collections::HashSet;
-use std::io;
-use std::sync::LazyLock;
-use std::{fmt::Write, str};
+use std::{collections::HashSet, fmt::Write, io, str, sync::LazyLock};
 
 use bytes::{Buf, BufMut, Bytes};
-use nom::character::streaming::space1;
-use nom::combinator::verify;
-use nom::multi::length_data;
-use nom::sequence::terminated;
 use nom::{
     branch::alt,
     bytes::streaming::{tag, tag_no_case, take_while1},
-    character::streaming::newline,
-    combinator::{consumed, map, map_res, opt},
-    sequence::{preceded, tuple},
+    character::streaming::{newline, space1},
+    combinator::{consumed, map, map_res, opt, verify},
+    multi::length_data,
+    sequence::{preceded, terminated, tuple},
     IResult,
 };
 use thiserror::Error;
