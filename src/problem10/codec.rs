@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::io;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use std::{fmt::Write, str};
 
 use bytes::{Buf, BufMut, Bytes};
@@ -19,7 +19,8 @@ use nom::{
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
 
-static ILLEGAL_FILENAME_CHARACTERS: OnceLock<HashSet<char>> = OnceLock::new();
+static ILLEGAL_FILENAME_CHARACTERS: LazyLock<HashSet<char>> =
+    LazyLock::new(|| r#"`~!@#$%^&*()+={}[]:;'",?\|"#.chars().collect());
 
 #[derive(Debug)]
 pub enum PlainCommand {
@@ -69,12 +70,7 @@ fn file_name(input: &[u8]) -> IResult<&[u8], String> {
                 str::from_utf8(name)
             }),
             |s: &str| {
-                s.starts_with('/')
-                    && !s.chars().any(|c| {
-                        ILLEGAL_FILENAME_CHARACTERS
-                            .get_or_init(|| r#"`~!@#$%^&*()+={}[]:;'",?\|"#.chars().collect())
-                            .contains(&c)
-                    })
+                s.starts_with('/') && !s.chars().any(|c| ILLEGAL_FILENAME_CHARACTERS.contains(&c))
             },
         ),
         |s| s.to_owned(),
