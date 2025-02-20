@@ -1,18 +1,18 @@
 use std::{
     io,
     pin::Pin,
-    task::{self, ready, Poll},
+    task::{self, Poll, ready},
 };
 
 use anyhow::bail;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::tag,
     combinator::{map, value},
     multi::fold_many0,
     number::complete::be_u8,
     sequence::preceded,
-    IResult,
 };
 use pin_project::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};

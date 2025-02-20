@@ -66,10 +66,13 @@ where
                             .cloned()
                     };
 
-                    if let Some(bytes) = data {
-                        framed.send(Reply::OkWithData(bytes)).await?;
-                    } else {
-                        framed.send(Reply::Error("no such file".into())).await?;
+                    match data {
+                        Some(bytes) => {
+                            framed.send(Reply::OkWithData(bytes)).await?;
+                        }
+                        _ => {
+                            framed.send(Reply::Error("no such file".into())).await?;
+                        }
                     }
                 }
                 Command::Put { file, data } => {

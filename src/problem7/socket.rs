@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     future, io,
     net::SocketAddr,
     pin::Pin,
@@ -10,9 +10,9 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{ensure, Context};
+use anyhow::{Context, ensure};
 use bytes::{Bytes, BytesMut};
-use futures_util::{ready, FutureExt, SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt, ready};
 use parking_lot::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -383,9 +383,7 @@ async fn dispatch_message(
                 if length < *confirmed_sent_length {
                     trace!(
                         session_id,
-                        length,
-                        confirmed_sent_length,
-                        "ignoring, already seen this ack"
+                        length, confirmed_sent_length, "ignoring, already seen this ack"
                     );
                     return Ok(());
                 }

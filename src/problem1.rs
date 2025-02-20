@@ -42,7 +42,7 @@ where
     loop {
         let Request { method, number } = match framed.next().await {
             Some(Ok(Request { method, .. })) if method != "isPrime" => {
-                return malformed_request(&mut framed).await
+                return malformed_request(&mut framed).await;
             }
             Some(Err(_)) => return malformed_request(&mut framed).await,
             Some(Ok(r)) => r,

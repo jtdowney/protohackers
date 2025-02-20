@@ -310,24 +310,24 @@ fn take_job(
 fn requeue_in_progress_job(state: SharedState, addr: SocketAddr) -> anyhow::Result<()> {
     let requeued_job = {
         let mut state = state.lock();
-        if let Some(InProgressJob {
-            id,
-            priority,
-            job,
-            queue,
-        }) = state.in_progress.remove(&addr)
-        {
-            debug!(id, queue, ?addr, "requing job");
-            state.jobs.insert(id, job);
-            state
-                .queues
-                .entry(queue.clone())
-                .or_default()
-                .push(id, priority);
+        match state.in_progress.remove(&addr) {
+            Some(InProgressJob {
+                id,
+                priority,
+                job,
+                queue,
+            }) => {
+                debug!(id, queue, ?addr, "requing job");
+                state.jobs.insert(id, job);
+                state
+                    .queues
+                    .entry(queue.clone())
+                    .or_default()
+                    .push(id, priority);
 
-            Some((id, priority, queue))
-        } else {
-            None
+                Some((id, priority, queue))
+            }
+            _ => None,
         }
     };
 

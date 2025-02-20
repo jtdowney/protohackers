@@ -2,13 +2,13 @@ use std::{collections::HashSet, fmt::Write, io, str, sync::LazyLock};
 
 use bytes::{Buf, BufMut, Bytes};
 use nom::{
+    IResult,
     branch::alt,
     bytes::streaming::{tag, tag_no_case, take_while1},
     character::streaming::{newline, space1},
     combinator::{consumed, map, map_res, opt, verify},
     multi::length_data,
     sequence::{preceded, terminated, tuple},
-    IResult,
 };
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};

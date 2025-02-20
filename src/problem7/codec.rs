@@ -2,12 +2,12 @@ use std::{fmt::Write, str};
 
 use anyhow::{ensure, format_err};
 use nom::{
+    Finish, IResult,
     branch::alt,
     bytes::complete::{escaped_transform, tag},
     character::complete::none_of,
     combinator::{all_consuming, map, value, verify},
     sequence::tuple,
-    Finish, IResult,
 };
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{trace, warn};

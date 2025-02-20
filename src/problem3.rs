@@ -2,7 +2,7 @@ use std::{net::SocketAddr, pin::pin, sync::Arc};
 
 use anyhow::bail;
 use futures_concurrency::stream::Merge;
-use futures_util::{stream, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::mpsc,

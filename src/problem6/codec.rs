@@ -1,13 +1,13 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 use nom::{
+    IResult,
     branch::alt,
     bytes::streaming::tag,
     combinator::{consumed, map, map_res},
     multi::{length_count, length_data},
-    number::streaming::{be_u16, be_u32, be_u8},
+    number::streaming::{be_u8, be_u16, be_u32},
     sequence::{preceded, tuple},
-    IResult,
 };
 use tokio_util::codec::{Decoder, Encoder};
 

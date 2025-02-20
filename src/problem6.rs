@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 use rand::prelude::*;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, Semaphore},
+    sync::{Semaphore, mpsc},
     time::{Instant, Interval},
 };
 use tokio_util::codec::Framed;
@@ -282,10 +282,7 @@ fn check_speed(
 
     trace!(
         centimiles_traveled,
-        time_traveled,
-        cmph_traveled,
-        cmph_limit,
-        "checking"
+        time_traveled, cmph_traveled, cmph_limit, "checking"
     );
 
     if cmph_traveled > cmph_limit {
@@ -324,13 +321,16 @@ async fn issue_ticket(
             .cloned()
     };
 
-    if let Some((_, tx)) = dispatcher {
-        trace!("sending ticket to a dispatcher");
-        tx.send(ticket)?;
-    } else {
-        trace!(?ticket, "unable to dispatch ticket, saving");
-        let mut state = state.lock();
-        state.pending_tickets.push(ticket);
+    match dispatcher {
+        Some((_, tx)) => {
+            trace!("sending ticket to a dispatcher");
+            tx.send(ticket)?;
+        }
+        _ => {
+            trace!(?ticket, "unable to dispatch ticket, saving");
+            let mut state = state.lock();
+            state.pending_tickets.push(ticket);
+        }
     }
 
     Ok(())
