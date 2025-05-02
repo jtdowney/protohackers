@@ -62,7 +62,7 @@ where
 {
     let bind = (Ipv4Addr::UNSPECIFIED, port);
     let listener = TcpListener::bind(bind).await?;
-    info!("listening on on {bind:?}");
+    info!("listening on {bind:?}");
 
     let state = S::default();
 

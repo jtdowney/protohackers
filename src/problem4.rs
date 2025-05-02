@@ -14,7 +14,7 @@ const VERSION: &str = "jtdowney protohackers";
 pub async fn start(port: u16) -> anyhow::Result<()> {
     let bind = (Ipv4Addr::UNSPECIFIED, port);
     let socket = Arc::new(UdpSocket::bind(bind).await?);
-    info!("listening on on {bind:?}");
+    info!("listening on {bind:?}");
 
     let state = SharedState::default();
 
