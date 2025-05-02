@@ -54,3 +54,29 @@ fn is_boguscoin_address(s: &str) -> bool {
         && s.starts_with('7')
         && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_boguscoin_address_detection() {
+        // Valid addresses
+        assert!(is_boguscoin_address("7F1u3wSD5RbOHQmupo9nx4TnhQ"));
+        assert!(is_boguscoin_address("7jgvRVooHVDzKEz3ZSLwipYSXj"));
+
+        // Too short
+        assert!(!is_boguscoin_address("7F1u3wSD"));
+
+        // Too long
+        assert!(!is_boguscoin_address(
+            "7F1u3wSD5RbOHQmupo9nx4TnhQabcdefghijklmnop"
+        ));
+
+        // Doesn't start with 7
+        assert!(!is_boguscoin_address("8F1u3wSD5RbOHQmupo9nx4TnhQ"));
+
+        // Has non-alphanumeric characters
+        assert!(!is_boguscoin_address("7F1u3wSD5RbOHQmupo9nx4-TnhQ"));
+    }
+}
