@@ -113,3 +113,100 @@ impl<Req: for<'a> Deserialize<'a>, Resp: Serialize> Encoder<Resp> for JsonLinesC
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[test]
+    fn strict_lines_codec_decode() -> anyhow::Result<()> {
+        let mut codec = StrictLinesCodec::default();
+        let mut buf = BytesMut::from("line1\nline2\n");
+
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(result, Some("line1".to_string()));
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(result, Some("line2".to_string()));
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(result, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn strict_lines_codec_encode() -> anyhow::Result<()> {
+        let mut codec = StrictLinesCodec::default();
+        let mut buf = BytesMut::new();
+
+        codec.encode("test message", &mut buf)?;
+        assert_eq!(buf.as_ref(), b"test message\n");
+
+        Ok(())
+    }
+
+    #[test]
+    fn strict_lines_codec_partial_line() -> anyhow::Result<()> {
+        let mut codec = StrictLinesCodec::default();
+        let mut buf = BytesMut::from("partial");
+
+        // No newline yet
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(result, None);
+
+        // Add more data with newline
+        buf.extend_from_slice(b" line\n");
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(result, Some("partial line".to_string()));
+
+        Ok(())
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestRequest {
+        id: u32,
+        name: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestResponse {
+        status: String,
+        code: u32,
+    }
+
+    #[test]
+    fn json_lines_codec_decode() -> anyhow::Result<()> {
+        let mut codec = JsonLinesCodec::<TestRequest, TestResponse>::default();
+        let json = r#"{"id":42,"name":"test"}"#;
+        let mut buf = BytesMut::from(format!("{}\n", json).as_str());
+
+        let result = codec.decode(&mut buf)?;
+        assert_eq!(
+            result,
+            Some(TestRequest {
+                id: 42,
+                name: "test".to_string()
+            })
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn json_lines_codec_encode() -> anyhow::Result<()> {
+        let mut codec = JsonLinesCodec::<TestRequest, TestResponse>::default();
+        let mut buf = BytesMut::new();
+
+        let response = TestResponse {
+            status: "ok".to_string(),
+            code: 200,
+        };
+        codec.encode(response, &mut buf)?;
+
+        let expected = r#"{"status":"ok","code":200}"#.as_bytes();
+        assert_eq!(&buf[..expected.len()], expected);
+        assert_eq!(buf[buf.len() - 1], b'\n');
+
+        Ok(())
+    }
+}
