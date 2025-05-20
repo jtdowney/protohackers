@@ -256,7 +256,7 @@ fn notify_waiting_workers(
     debug!(queue, id, "notifying any waiting workers");
 
     let waiter = {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut state = state.lock();
         state
             .waiting_queues

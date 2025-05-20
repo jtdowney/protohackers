@@ -313,7 +313,7 @@ async fn issue_ticket(
             .or_default()
             .extend(dates);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         state
             .dispatchers
             .get(&road)

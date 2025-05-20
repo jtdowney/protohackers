@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, net::SocketAddr};
 use anyhow::bail;
 use bytes::{BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
-use nom::{Finish, IResult, branch::alt, bytes::complete::tag, number::complete::be_i32};
+use nom::{Finish, IResult, Parser, branch::alt, bytes::complete::tag, number::complete::be_i32};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
@@ -16,9 +16,12 @@ enum Packet {
 }
 
 fn packet(input: &[u8]) -> IResult<&[u8], Packet> {
-    let (input, packet_type) = alt((tag(b"I"), tag(b"Q")))(input)?;
-    let (input, first) = be_i32(input)?;
-    let (input, second) = be_i32(input)?;
+    let mut packet_type_parser = alt((tag(&b"I"[..]), tag(&b"Q"[..])));
+    let (input, packet_type) = packet_type_parser.parse(input)?;
+    let mut first_parser = be_i32;
+    let (input, first) = first_parser.parse(input)?;
+    let mut second_parser = be_i32;
+    let (input, second) = second_parser.parse(input)?;
     let packet = match packet_type {
         b"I" => Packet::Insert {
             timestamp: first,

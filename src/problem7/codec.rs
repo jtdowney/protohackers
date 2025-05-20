@@ -2,12 +2,11 @@ use std::{fmt::Write, str};
 
 use anyhow::{ensure, format_err};
 use nom::{
-    Finish, IResult,
+    Finish, IResult, Parser,
     branch::alt,
     bytes::complete::{escaped_transform, tag},
     character::complete::none_of,
     combinator::{all_consuming, map, value, verify},
-    sequence::tuple,
 };
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{trace, warn};
@@ -32,28 +31,29 @@ pub enum Message {
 }
 
 fn positive_number(input: &str) -> IResult<&str, usize> {
-    map(verify(nom::character::complete::i32, |&n| n >= 0), |n| {
+    let mut parser = map(verify(nom::character::complete::i32, |&n| n >= 0), |n| {
         n as usize
-    })(input)
+    });
+    parser.parse(input)
 }
 
 pub fn message(input: &str) -> IResult<&str, Message> {
     let connect = map(
-        tuple((tag("/connect/"), positive_number, tag("/"))),
+        (tag("/connect/"), positive_number, tag("/")),
         |(_, session_id, _)| Message::Connect { session_id },
     );
     let ack = map(
-        tuple((
+        (
             tag("/ack/"),
             positive_number,
             tag("/"),
             positive_number,
             tag("/"),
-        )),
+        ),
         |(_, session_id, _, length, _)| Message::Ack { session_id, length },
     );
     let data = map(
-        tuple((
+        (
             tag("/data/"),
             positive_number,
             tag("/"),
@@ -65,7 +65,7 @@ pub fn message(input: &str) -> IResult<&str, Message> {
                 alt((value("\\", tag("\\")), value("/", tag("/")))),
             ),
             tag("/"),
-        )),
+        ),
         |(_, session_id, _, position, _, payload, _)| Message::Data {
             session_id,
             position,
@@ -73,11 +73,12 @@ pub fn message(input: &str) -> IResult<&str, Message> {
         },
     );
     let close = map(
-        tuple((tag("/close/"), positive_number, tag("/"))),
+        (tag("/close/"), positive_number, tag("/")),
         |(_, session_id, _)| Message::Close { session_id },
     );
 
-    alt((connect, ack, data, close))(input)
+    let mut parser = alt((connect, ack, data, close));
+    parser.parse(input)
 }
 
 pub struct LrcpCodec;
@@ -97,7 +98,7 @@ impl Decoder for LrcpCodec {
         }
 
         let buffer = str::from_utf8(src)?.to_owned();
-        let result = match all_consuming(message)(&buffer).finish() {
+        let result = match all_consuming(message).parse(&buffer).finish() {
             Ok((_, message)) => {
                 trace!(?buffer, "parsed message");
                 Ok(Some(message))

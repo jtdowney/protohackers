@@ -1,13 +1,13 @@
 use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::streaming::tag,
     combinator::{consumed, map, map_res},
     multi::{length_count, length_data},
     number::streaming::{be_u8, be_u16, be_u32},
-    sequence::{preceded, tuple},
+    sequence::preceded,
 };
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -33,29 +33,31 @@ pub enum ClientMessage {
 }
 
 fn str(input: &[u8]) -> IResult<&[u8], String> {
-    map_res(length_data(be_u8), |data| {
+    let mut parser = map_res(length_data(be_u8), |data| {
         std::str::from_utf8(data).map(String::from)
-    })(input)
+    });
+    parser.parse(input)
 }
 
 fn client_message(input: &[u8]) -> IResult<&[u8], ClientMessage> {
     let plate = map(
-        preceded(tag(b"\x20"), tuple((str, be_u32))),
+        preceded(tag(&b"\x20"[..]), (str, be_u32)),
         |(plate, timestamp)| ClientMessage::Plate { plate, timestamp },
     );
-    let want_heartbeat = map(preceded(tag(b"\x40"), be_u32), |interval| {
+    let want_heartbeat = map(preceded(tag(&b"\x40"[..]), be_u32), |interval| {
         ClientMessage::WantHeartbeat { interval }
     });
     let i_am_camera = map(
-        preceded(tag(b"\x80"), tuple((be_u16, be_u16, be_u16))),
+        preceded(tag(&b"\x80"[..]), (be_u16, be_u16, be_u16)),
         |(road, mile, limit)| ClientMessage::IAmCamera { road, mile, limit },
     );
     let i_am_dispatcher = map(
-        preceded(tag(b"\x81"), length_count(be_u8, be_u16)),
+        preceded(tag(&b"\x81"[..]), length_count(be_u8, be_u16)),
         |roads| ClientMessage::IAmDispatcher { roads },
     );
 
-    alt((plate, want_heartbeat, i_am_camera, i_am_dispatcher))(input)
+    let mut parser = alt((plate, want_heartbeat, i_am_camera, i_am_dispatcher));
+    parser.parse(input)
 }
 
 pub struct SpeedDaemonCodec;
@@ -66,7 +68,7 @@ impl Decoder for SpeedDaemonCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let used_length;
-        let message = match consumed(client_message)(src) {
+        let message = match consumed(client_message).parse(src) {
             Ok((_, (raw, message))) => {
                 used_length = raw.len();
                 message

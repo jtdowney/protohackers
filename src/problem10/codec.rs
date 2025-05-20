@@ -2,13 +2,13 @@ use std::{collections::HashSet, fmt::Write, io, str, sync::LazyLock};
 
 use bytes::{Buf, BufMut, Bytes};
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::streaming::{tag, tag_no_case, take_while1},
     character::streaming::{newline, space1},
     combinator::{consumed, map, map_res, opt, verify},
     multi::length_data,
-    sequence::{preceded, terminated, tuple},
+    sequence::{preceded, terminated},
 };
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
@@ -52,13 +52,14 @@ pub enum Command {
 }
 
 fn revision(input: &[u8]) -> IResult<&[u8], usize> {
-    map(preceded(tag("r"), nom::character::streaming::u32), |n| {
+    let mut parser = map(preceded(tag("r"), nom::character::streaming::u32), |n| {
         n as usize
-    })(input)
+    });
+    parser.parse(input)
 }
 
 fn file_name(input: &[u8]) -> IResult<&[u8], String> {
-    map(
+    let mut parser = map(
         verify(
             map_res(take_while1(|b: u8| !b.is_ascii_whitespace()), |name| {
                 str::from_utf8(name)
@@ -68,27 +69,29 @@ fn file_name(input: &[u8]) -> IResult<&[u8], String> {
             },
         ),
         |s| s.to_owned(),
-    )(input)
+    );
+    parser.parse(input)
 }
 
 fn parse_get_command(input: &[u8]) -> IResult<&[u8], Command> {
-    map(
+    let mut parser = map(
         terminated(
             preceded(
-                tuple((tag_no_case("get"), space1)),
-                tuple((file_name, opt(map(tuple((space1, revision)), |(_, r)| r)))),
+                (tag_no_case("get"), space1),
+                (file_name, opt(map((space1, revision), |(_, r)| r))),
             ),
             newline,
         ),
         |(file, revision)| Command::Get { file, revision },
-    )(input)
+    );
+    parser.parse(input)
 }
 
 fn parse_put_command(input: &[u8]) -> IResult<&[u8], Command> {
-    map(
+    let mut parser = map(
         preceded(
-            tuple((tag_no_case("put"), space1)),
-            tuple((
+            (tag_no_case("put"), space1),
+            (
                 file_name,
                 map(
                     verify(
@@ -103,24 +106,24 @@ fn parse_put_command(input: &[u8]) -> IResult<&[u8], Command> {
                     ),
                     |data: &[u8]| data.to_vec(),
                 ),
-            )),
+            ),
         ),
         |(file, data)| Command::Put { file, data },
-    )(input)
+    );
+    parser.parse(input)
 }
 
 fn parse_list_command(input: &[u8]) -> IResult<&[u8], Command> {
-    map(
-        terminated(
-            preceded(tuple((tag_no_case("list"), space1)), file_name),
-            newline,
-        ),
+    let mut parser = map(
+        terminated(preceded((tag_no_case("list"), space1), file_name), newline),
         |directory| Command::List { directory },
-    )(input)
+    );
+    parser.parse(input)
 }
 
 fn parse_command(input: &[u8]) -> IResult<&[u8], Command> {
-    alt((parse_get_command, parse_put_command, parse_list_command))(input)
+    let mut parser = alt((parse_get_command, parse_put_command, parse_list_command));
+    parser.parse(input)
 }
 
 pub struct VcsCodec;
@@ -130,7 +133,9 @@ impl Decoder for VcsCodec {
     type Error = ParseError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let parsed = consumed(parse_command)(src).map(|(_, (r, c))| (r.len(), c));
+        let parsed = consumed(parse_command)
+            .parse(src)
+            .map(|(_, (r, c))| (r.len(), c));
         match parsed {
             Ok((used_length, message)) => {
                 src.advance(used_length);

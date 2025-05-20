@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::bail;
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::tag,
     combinator::{map, value},
@@ -19,19 +19,22 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::codec::Decoder;
 
 fn cipher_operation(input: &[u8]) -> IResult<&[u8], CipherOperation> {
-    let reversebits = value(CipherOperation::ReverseBits, tag(b"\x01"));
-    let xor = map(preceded(tag(b"\x02"), be_u8), CipherOperation::Xor);
-    let xor_position = value(CipherOperation::XorPosition, tag(b"\x03"));
-    let add = map(preceded(tag(b"\x04"), be_u8), CipherOperation::Add);
-    let add_position = value(CipherOperation::AddPosition, tag(b"\x05"));
-    alt((reversebits, xor, xor_position, add, add_position))(input)
+    let reversebits = value(CipherOperation::ReverseBits, tag(&b"\x01"[..]));
+    let xor = map(preceded(tag(&b"\x02"[..]), be_u8), CipherOperation::Xor);
+    let xor_position = value(CipherOperation::XorPosition, tag(&b"\x03"[..]));
+    let add = map(preceded(tag(&b"\x04"[..]), be_u8), CipherOperation::Add);
+    let add_position = value(CipherOperation::AddPosition, tag(&b"\x05"[..]));
+
+    let mut parser = alt((reversebits, xor, xor_position, add, add_position));
+    parser.parse(input)
 }
 
 fn cipher_spec(input: &[u8]) -> IResult<&[u8], Vec<CipherOperation>> {
-    fold_many0(cipher_operation, Vec::new, |mut acc, operation| {
+    let mut parser = fold_many0(cipher_operation, Vec::new, |mut acc, operation| {
         acc.push(operation);
         acc
-    })(input)
+    });
+    parser.parse(input)
 }
 
 #[derive(Default)]
