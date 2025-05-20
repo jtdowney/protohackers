@@ -1,15 +1,25 @@
 use std::net::SocketAddr;
 
+use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite,
-{
-    let (mut rd, mut wr) = tokio::io::split(stream);
-    tokio::io::copy(&mut rd, &mut wr).await?;
+use crate::server::ConnectionHandler;
 
-    Ok(())
+pub struct Handler;
+
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = ();
+
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        _addr: SocketAddr,
+        _state: Self::State,
+    ) -> anyhow::Result<()> {
+        let (mut rd, mut wr) = tokio::io::split(stream);
+        tokio::io::copy(&mut rd, &mut wr).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -25,7 +35,7 @@ mod tests {
             .write(b"foobar")
             .build();
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }

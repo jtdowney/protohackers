@@ -1,5 +1,3 @@
-mod codec;
-
 use std::{
     collections::{HashMap, HashSet},
     future,
@@ -8,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -20,9 +19,13 @@ use tokio::{
 use tokio_util::codec::Framed;
 use tracing::{debug, trace, warn};
 
-use crate::problem6::codec::{ServerError, ServerHeartbeat};
-
 use self::codec::{ClientMessage, SpeedDaemonCodec};
+use crate::{
+    problem6::codec::{ServerError, ServerHeartbeat},
+    server::ConnectionHandler,
+};
+
+mod codec;
 
 pub type Road = u16;
 pub type Timestamp = u32;
@@ -62,44 +65,52 @@ enum Role {
     Dispatcher { rx: mpsc::UnboundedReceiver<Ticket> },
 }
 
-pub async fn handle<T>(stream: T, addr: SocketAddr, state: SharedState) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut framed = Framed::new(stream, SpeedDaemonCodec);
-    let mut heartbeat: Option<Interval> = None;
-    let mut role = Role::Unknown;
+pub struct Handler;
 
-    loop {
-        tokio::select! {
-            result = framed.next() => match result {
-                Some(Ok(message)) => handle_client_message(message, addr, state.clone(), &mut framed, &mut role, &mut heartbeat).await?,
-                Some(Err(_)) => framed.send(ServerError::from("unable to parse message")).await?,
-                None => break,
-            },
-            ticket = dispatch_ticket(&mut role) => match ticket {
-                Some(ticket) => framed.send(ticket).await?,
-                None => continue,
-            },
-            _ = heartbeat_tick(heartbeat.as_mut()) => {
-                framed.send(ServerHeartbeat).await?;
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = SharedState;
+
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        addr: SocketAddr,
+        state: Self::State,
+    ) -> anyhow::Result<()> {
+        let mut framed = Framed::new(stream, SpeedDaemonCodec);
+        let mut heartbeat: Option<Interval> = None;
+        let mut role = Role::Unknown;
+
+        loop {
+            tokio::select! {
+                result = framed.next() => match result {
+                    Some(Ok(message)) => handle_client_message(message, addr, state.clone(), &mut framed, &mut role, &mut heartbeat).await?,
+                    Some(Err(_)) => framed.send(ServerError::from("unable to parse message")).await?,
+                    None => break,
+                },
+                ticket = dispatch_ticket(&mut role) => match ticket {
+                    Some(ticket) => framed.send(ticket).await?,
+                    None => continue,
+                },
+                _ = heartbeat_tick(heartbeat.as_mut()) => {
+                    framed.send(ServerHeartbeat).await?;
+                }
             }
         }
-    }
 
-    if let Role::Dispatcher { .. } = role {
-        let mut state = state.lock();
+        if let Role::Dispatcher { .. } = role {
+            let mut state = state.lock();
 
-        for (_, dispatchers) in state.dispatchers.iter_mut() {
-            dispatchers.retain(|&(dispatcher_addr, _)| dispatcher_addr != addr)
+            for (_, dispatchers) in state.dispatchers.iter_mut() {
+                dispatchers.retain(|&(dispatcher_addr, _)| dispatcher_addr != addr)
+            }
+
+            state
+                .dispatchers
+                .retain(|_, dispatchers| !dispatchers.is_empty());
         }
 
-        state
-            .dispatchers
-            .retain(|_, dispatchers| !dispatchers.is_empty());
+        Ok(())
     }
-
-    Ok(())
 }
 
 async fn dispatch_ticket(role: &mut Role) -> Option<Ticket> {

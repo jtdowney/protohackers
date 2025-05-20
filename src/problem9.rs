@@ -1,5 +1,6 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
 use priority_queue::PriorityQueue;
@@ -12,7 +13,7 @@ use tokio::{
 use tokio_util::codec::Framed;
 use tracing::{debug, trace, warn};
 
-use crate::codec::JsonLinesCodec;
+use crate::{codec::JsonLinesCodec, server::ConnectionHandler};
 
 type Job = serde_json::Map<String, serde_json::Value>;
 
@@ -80,171 +81,179 @@ enum Response {
     },
 }
 
-pub async fn handle<T>(stream: T, addr: SocketAddr, state: SharedState) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut framed = Framed::new(stream, JsonLinesCodec::<Request, Response>::default());
-    while let Some(frame) = framed.next().await {
-        match frame {
-            Ok(Request::Put {
-                queue,
-                job,
-                priority,
-            }) => {
-                debug!(?queue, priority, "received put");
+pub struct Handler;
 
-                let id = {
-                    let mut state = state.lock();
-                    state.last_job_id += 1;
-                    let id = state.last_job_id;
-                    state.jobs.insert(id, job);
-                    state
-                        .queues
-                        .entry(queue.clone())
-                        .or_default()
-                        .push(id, priority);
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = SharedState;
 
-                    id
-                };
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        addr: SocketAddr,
+        state: Self::State,
+    ) -> anyhow::Result<()> {
+        let mut framed = Framed::new(stream, JsonLinesCodec::<Request, Response>::default());
+        while let Some(frame) = framed.next().await {
+            match frame {
+                Ok(Request::Put {
+                    queue,
+                    job,
+                    priority,
+                }) => {
+                    debug!(?queue, priority, "received put");
 
-                trace!(id, "job enqueued");
-                notify_waiting_workers(state.clone(), queue, id, priority)?;
-
-                framed.send(Response::JobEnqueued { id }).await?;
-            }
-            Ok(Request::Get { queues, wait }) => {
-                debug!(?queues, wait, "received get");
-
-                let candidate = {
-                    let state = state.lock();
-                    state
-                        .queues
-                        .iter()
-                        .filter(|(queue, _)| queues.contains(queue))
-                        .filter_map(|(name, queue)| {
-                            queue.peek().map(|(&id, &priority)| (name, id, priority))
-                        })
-                        .max_by_key(|&(_, _, priority)| priority)
-                        .map(|(name, id, priority)| (name.clone(), id, priority))
-                };
-
-                let candidate = candidate.and_then(|(queue, id, priority)| {
-                    take_job(state.clone(), addr, id, &queue, priority)
-                        .map(move |job| (queue, id, priority, job))
-                });
-                if let Some((queue, id, priority, job)) = candidate {
-                    let response = Response::Job {
-                        id,
-                        job,
-                        queue,
-                        priority,
-                    };
-                    trace!(id, ?addr, "handing out job");
-                    framed.send(response).await?;
-                    continue;
-                }
-
-                if wait {
-                    trace!(?addr, "worker waiting");
-
-                    let mut rx = {
+                    let id = {
                         let mut state = state.lock();
-                        let (tx, rx) = mpsc::unbounded_channel();
-                        for queue in queues {
-                            state
-                                .waiting_queues
-                                .entry(queue)
-                                .or_default()
-                                .insert(addr, tx.clone());
-                        }
+                        state.last_job_id += 1;
+                        let id = state.last_job_id;
+                        state.jobs.insert(id, job);
+                        state
+                            .queues
+                            .entry(queue.clone())
+                            .or_default()
+                            .push(id, priority);
 
-                        rx
+                        id
                     };
 
-                    if let Some(InProgressJob {
-                        id,
-                        priority,
-                        job,
-                        queue,
-                    }) = rx.recv().await
-                    {
-                        trace!(id, ?addr, "got job for waiting worker");
+                    trace!(id, "job enqueued");
+                    notify_waiting_workers(state.clone(), queue, id, priority)?;
 
+                    framed.send(Response::JobEnqueued { id }).await?;
+                }
+                Ok(Request::Get { queues, wait }) => {
+                    debug!(?queues, wait, "received get");
+
+                    let candidate = {
+                        let state = state.lock();
+                        state
+                            .queues
+                            .iter()
+                            .filter(|(queue, _)| queues.contains(queue))
+                            .filter_map(|(name, queue)| {
+                                queue.peek().map(|(&id, &priority)| (name, id, priority))
+                            })
+                            .max_by_key(|&(_, _, priority)| priority)
+                            .map(|(name, id, priority)| (name.clone(), id, priority))
+                    };
+
+                    let candidate = candidate.and_then(|(queue, id, priority)| {
+                        take_job(state.clone(), addr, id, &queue, priority)
+                            .map(move |job| (queue, id, priority, job))
+                    });
+                    if let Some((queue, id, priority, job)) = candidate {
                         let response = Response::Job {
                             id,
                             job,
                             queue,
                             priority,
                         };
+                        trace!(id, ?addr, "handing out job");
                         framed.send(response).await?;
+                        continue;
                     }
-                } else {
-                    trace!(?addr, "sending no job");
-                    framed.send(Response::NoJob).await?;
-                }
-            }
-            Ok(Request::Delete { id }) => {
-                debug!(id, ?addr, "received delete");
 
-                let removed = {
-                    let mut state = state.lock();
-                    if state.jobs.remove(&id).is_some() {
-                        for queue in state.queues.values_mut() {
-                            queue.remove(&id);
+                    if wait {
+                        trace!(?addr, "worker waiting");
+
+                        let mut rx = {
+                            let mut state = state.lock();
+                            let (tx, rx) = mpsc::unbounded_channel();
+                            for queue in queues {
+                                state
+                                    .waiting_queues
+                                    .entry(queue)
+                                    .or_default()
+                                    .insert(addr, tx.clone());
+                            }
+
+                            rx
+                        };
+
+                        if let Some(InProgressJob {
+                            id,
+                            priority,
+                            job,
+                            queue,
+                        }) = rx.recv().await
+                        {
+                            trace!(id, ?addr, "got job for waiting worker");
+
+                            let response = Response::Job {
+                                id,
+                                job,
+                                queue,
+                                priority,
+                            };
+                            framed.send(response).await?;
                         }
-
-                        state.in_progress.retain(|_, j| j.id != id);
-
-                        true
                     } else {
-                        false
+                        trace!(?addr, "sending no job");
+                        framed.send(Response::NoJob).await?;
                     }
-                };
-
-                if removed {
-                    trace!(?addr, "sending ok to delete");
-                    framed.send(Response::Ok).await?;
-                } else {
-                    trace!(?addr, "sending no job to delete");
-                    framed.send(Response::NoJob).await?;
                 }
-            }
-            Ok(Request::Abort { id }) => {
-                debug!(id, ?addr, "received abort");
+                Ok(Request::Delete { id }) => {
+                    debug!(id, ?addr, "received delete");
 
-                let valid = {
-                    let state = state.lock();
-                    state
-                        .in_progress
-                        .get(&addr)
-                        .map(|j| j.id == id)
-                        .unwrap_or_default()
-                };
+                    let removed = {
+                        let mut state = state.lock();
+                        if state.jobs.remove(&id).is_some() {
+                            for queue in state.queues.values_mut() {
+                                queue.remove(&id);
+                            }
 
-                if valid {
-                    requeue_in_progress_job(state.clone(), addr)?;
-                    trace!(?addr, "sending ok to abort");
-                    framed.send(Response::Ok).await?;
-                } else {
-                    trace!(?addr, "sending no job to abort");
-                    framed.send(Response::NoJob).await?;
+                            state.in_progress.retain(|_, j| j.id != id);
+
+                            true
+                        } else {
+                            false
+                        }
+                    };
+
+                    if removed {
+                        trace!(?addr, "sending ok to delete");
+                        framed.send(Response::Ok).await?;
+                    } else {
+                        trace!(?addr, "sending no job to delete");
+                        framed.send(Response::NoJob).await?;
+                    }
                 }
-            }
-            Err(e) => {
-                warn!(error = ?e, "error reading frame");
-                framed
-                    .send(Response::Error {
-                        error: "error reading request".into(),
-                    })
-                    .await?;
+                Ok(Request::Abort { id }) => {
+                    debug!(id, ?addr, "received abort");
+
+                    let valid = {
+                        let state = state.lock();
+                        state
+                            .in_progress
+                            .get(&addr)
+                            .map(|j| j.id == id)
+                            .unwrap_or_default()
+                    };
+
+                    if valid {
+                        requeue_in_progress_job(state.clone(), addr)?;
+                        trace!(?addr, "sending ok to abort");
+                        framed.send(Response::Ok).await?;
+                    } else {
+                        trace!(?addr, "sending no job to abort");
+                        framed.send(Response::NoJob).await?;
+                    }
+                }
+                Err(e) => {
+                    warn!(error = ?e, "error reading frame");
+                    framed
+                        .send(Response::Error {
+                            error: "error reading request".into(),
+                        })
+                        .await?;
+                }
             }
         }
+
+        requeue_in_progress_job(state, addr)?;
+
+        Ok(())
     }
-
-    requeue_in_progress_job(state, addr)?;
-
-    Ok(())
 }
 
 fn notify_waiting_workers(

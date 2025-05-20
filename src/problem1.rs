@@ -1,11 +1,12 @@
 use std::net::SocketAddr;
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
-use crate::codec::JsonLinesCodec;
+use crate::{codec::JsonLinesCodec, server::ConnectionHandler};
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -17,6 +18,42 @@ struct Request {
 struct Response {
     method: String,
     prime: bool,
+}
+
+pub struct Handler;
+
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = ();
+
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        _addr: SocketAddr,
+        _state: Self::State,
+    ) -> anyhow::Result<()> {
+        let mut framed = Framed::new(stream, JsonLinesCodec::<Request, Response>::default());
+        loop {
+            let Request { method, number } = match framed.next().await {
+                Some(Ok(Request { method, .. })) if method != "isPrime" => {
+                    return malformed_request(&mut framed).await;
+                }
+                Some(Err(_)) => return malformed_request(&mut framed).await,
+                Some(Ok(r)) => r,
+                None => break,
+            };
+
+            let prime = if let Some(n) = number.as_u64() {
+                primes::is_prime(n)
+            } else {
+                false
+            };
+
+            let response = Response { method, prime };
+            framed.send(response).await?;
+        }
+
+        Ok(())
+    }
 }
 
 async fn malformed_request<T>(
@@ -34,34 +71,6 @@ where
     Ok(())
 }
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut framed = Framed::new(stream, JsonLinesCodec::<Request, Response>::default());
-    loop {
-        let Request { method, number } = match framed.next().await {
-            Some(Ok(Request { method, .. })) if method != "isPrime" => {
-                return malformed_request(&mut framed).await;
-            }
-            Some(Err(_)) => return malformed_request(&mut framed).await,
-            Some(Ok(r)) => r,
-            None => break,
-        };
-
-        let prime = if let Some(n) = number.as_u64() {
-            primes::is_prime(n)
-        } else {
-            false
-        };
-
-        let response = Response { method, prime };
-        framed.send(response).await?;
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use tokio::io::BufReader;
@@ -76,7 +85,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -89,7 +98,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -102,7 +111,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -115,7 +124,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -128,7 +137,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -141,7 +150,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -154,7 +163,7 @@ mod tests {
             .build();
         let stream = BufReader::new(stream);
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }

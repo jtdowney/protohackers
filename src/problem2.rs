@@ -1,11 +1,14 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::bail;
+use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use nom::{Finish, IResult, Parser, branch::alt, bytes::complete::tag, number::complete::be_i32};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Decoder, Encoder, Framed};
+
+use crate::server::ConnectionHandler;
 
 const PACKET_SIZE: usize = 9;
 
@@ -65,40 +68,48 @@ impl Encoder<i32> for PacketCodec {
     }
 }
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut data = BTreeMap::new();
-    let mut framed = Framed::new(stream, PacketCodec);
-    while let Some(Ok(packet)) = framed.next().await {
-        match packet {
-            Packet::Insert { timestamp, price } => {
-                data.insert(timestamp, price);
-            }
-            Packet::Query { start, end } => {
-                if start > end {
-                    framed.send(0).await?;
-                    continue;
-                }
+pub struct Handler;
 
-                let items = data
-                    .range(start..=end)
-                    .map(|(_, &p)| p as isize)
-                    .collect::<Vec<isize>>();
-                if items.is_empty() {
-                    framed.send(0).await?;
-                    continue;
-                }
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = ();
 
-                let total = items.iter().sum::<isize>();
-                let mean = total / items.len() as isize;
-                framed.send(mean as i32).await?;
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        _addr: SocketAddr,
+        _state: Self::State,
+    ) -> anyhow::Result<()> {
+        let mut data = BTreeMap::new();
+        let mut framed = Framed::new(stream, PacketCodec);
+        while let Some(Ok(packet)) = framed.next().await {
+            match packet {
+                Packet::Insert { timestamp, price } => {
+                    data.insert(timestamp, price);
+                }
+                Packet::Query { start, end } => {
+                    if start > end {
+                        framed.send(0).await?;
+                        continue;
+                    }
+
+                    let items = data
+                        .range(start..=end)
+                        .map(|(_, &p)| p as isize)
+                        .collect::<Vec<isize>>();
+                    if items.is_empty() {
+                        framed.send(0).await?;
+                        continue;
+                    }
+
+                    let total = items.iter().sum::<isize>();
+                    let mean = total / items.len() as isize;
+                    framed.send(mean as i32).await?;
+                }
             }
         }
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -116,7 +127,7 @@ mod tests {
             .write(b"\x00\x00\x00\x65")
             .build();
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -128,7 +139,7 @@ mod tests {
             .write(b"\x00\x00\x00\x00")
             .build();
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }
@@ -144,7 +155,7 @@ mod tests {
             .write(b"\x00\x00\x00\x00")
             .build();
 
-        let _ = handle(stream, "127.0.0.1:1024".parse()?, ()).await;
+        let _ = Handler::handle_connection(stream, "127.0.0.1:1024".parse()?, ()).await;
 
         Ok(())
     }

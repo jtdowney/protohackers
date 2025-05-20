@@ -12,6 +12,7 @@ panic = "abort"
 [dependencies]
 anyhow = "1"
 argh = "0.1.9"
+async-trait = "0.1"
 blake3 = "1"
 bytes = "1"
 futures-concurrency = "7"

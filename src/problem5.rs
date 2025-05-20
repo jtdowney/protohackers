@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -8,29 +9,37 @@ use tokio::{
 };
 use tokio_util::codec::Framed;
 
-use crate::codec::StrictLinesCodec;
+use crate::{codec::StrictLinesCodec, server::ConnectionHandler};
 
 const UPSTREAM_ADDR: &str = "chat.protohackers.com:16963";
 const REPLACEMENT_ADDRESS: &str = "7YWHMfk9JZe0LM0g1ZauHuiSxhI";
 
-pub async fn handle<T>(stream: T, _addr: SocketAddr, _state: ()) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite,
-{
-    let server = TcpStream::connect(UPSTREAM_ADDR).await?;
-    let (server_tx, server_rx) = Framed::new(server, StrictLinesCodec::default()).split();
-    let (client_tx, client_rx) = Framed::new(stream, StrictLinesCodec::default()).split();
+pub struct Handler;
 
-    let server_to_client = server_rx
-        .map(|msg| msg.map(rewrite_message))
-        .forward(client_tx);
-    let client_to_server = client_rx
-        .map(|msg| msg.map(rewrite_message))
-        .forward(server_tx);
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = ();
 
-    try_join!(server_to_client, client_to_server)?;
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        _addr: SocketAddr,
+        _state: Self::State,
+    ) -> anyhow::Result<()> {
+        let server = TcpStream::connect(UPSTREAM_ADDR).await?;
+        let (server_tx, server_rx) = Framed::new(server, StrictLinesCodec::default()).split();
+        let (client_tx, client_rx) = Framed::new(stream, StrictLinesCodec::default()).split();
 
-    Ok(())
+        let server_to_client = server_rx
+            .map(|msg| msg.map(rewrite_message))
+            .forward(client_tx);
+        let client_to_server = client_rx
+            .map(|msg| msg.map(rewrite_message))
+            .forward(server_tx);
+
+        try_join!(server_to_client, client_to_server)?;
+
+        Ok(())
+    }
 }
 
 fn rewrite_message<S: AsRef<str>>(message: S) -> String {

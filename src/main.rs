@@ -1,3 +1,7 @@
+use argh::FromArgs;
+
+use crate::server::{Server, TcpServer};
+
 mod codec;
 mod problem0;
 mod problem1;
@@ -10,15 +14,7 @@ mod problem6;
 mod problem7;
 mod problem8;
 mod problem9;
-
-use std::{
-    future::Future,
-    net::{Ipv4Addr, SocketAddr},
-};
-
-use argh::FromArgs;
-use tokio::net::{TcpListener, TcpStream};
-use tracing::{info, warn};
+mod server;
 
 #[derive(FromArgs)]
 /// Protohackers
@@ -34,17 +30,17 @@ async fn main() -> anyhow::Result<()> {
 
     let Args { port } = argh::from_env();
 
-    let server0 = tokio::spawn(create_server(port, problem0::handle));
-    let server1 = tokio::spawn(create_server(port + 1, problem1::handle));
-    let server2 = tokio::spawn(create_server(port + 2, problem2::handle));
-    let server3 = tokio::spawn(create_server(port + 3, problem3::handle));
-    let server4 = tokio::spawn(problem4::start(port + 4));
-    let server5 = tokio::spawn(create_server(port + 5, problem5::handle));
-    let server6 = tokio::spawn(create_server(port + 6, problem6::handle));
-    let server7 = tokio::spawn(problem7::start(port + 7));
-    let server8 = tokio::spawn(create_server(port + 8, problem8::handle));
-    let server9 = tokio::spawn(create_server(port + 9, problem9::handle));
-    let server10 = tokio::spawn(create_server(port + 10, problem10::handle));
+    let server0 = tokio::spawn(TcpServer::<problem0::Handler>::start(port));
+    let server1 = tokio::spawn(TcpServer::<problem1::Handler>::start(port + 1));
+    let server2 = tokio::spawn(TcpServer::<problem2::Handler>::start(port + 2));
+    let server3 = tokio::spawn(TcpServer::<problem3::Handler>::start(port + 3));
+    let server4 = tokio::spawn(problem4::KvStoreServer::start(port + 4));
+    let server5 = tokio::spawn(TcpServer::<problem5::Handler>::start(port + 5));
+    let server6 = tokio::spawn(TcpServer::<problem6::Handler>::start(port + 6));
+    let server7 = tokio::spawn(problem7::LrcpServer::start(port + 7));
+    let server8 = tokio::spawn(TcpServer::<problem8::Handler>::start(port + 8));
+    let server9 = tokio::spawn(TcpServer::<problem9::Handler>::start(port + 9));
+    let server10 = tokio::spawn(TcpServer::<problem10::Handler>::start(port + 10));
 
     let _ = tokio::join!(
         server0, server1, server2, server3, server4, server5, server6, server7, server8, server9,
@@ -52,29 +48,4 @@ async fn main() -> anyhow::Result<()> {
     );
 
     Ok(())
-}
-
-async fn create_server<F, Fut, S>(port: u16, handle: F) -> anyhow::Result<()>
-where
-    F: Fn(TcpStream, SocketAddr, S) -> Fut + Send + Sync + Copy + 'static,
-    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
-    S: Default + Send + Sync + Clone + 'static,
-{
-    let bind = (Ipv4Addr::UNSPECIFIED, port);
-    let listener = TcpListener::bind(bind).await?;
-    info!("listening on {bind:?}");
-
-    let state = S::default();
-
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        info!("connection from {addr}");
-
-        let state = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle(stream, addr, state).await {
-                warn!(error = ?e, "error handling client");
-            }
-        });
-    }
 }

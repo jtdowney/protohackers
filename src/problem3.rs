@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, pin::pin, sync::Arc};
 
 use anyhow::bail;
+use async_trait::async_trait;
 use futures_concurrency::stream::Merge;
 use futures_util::{SinkExt, StreamExt, stream};
 use tokio::{
@@ -9,7 +10,7 @@ use tokio::{
 };
 use tokio_util::codec::Framed;
 
-use crate::codec::StrictLinesCodec;
+use crate::{codec::StrictLinesCodec, server::ConnectionHandler};
 
 enum Action {
     SentMessage(String),
@@ -44,82 +45,91 @@ impl State {
     }
 }
 
-pub async fn handle<T>(stream: T, addr: SocketAddr, state: SharedState) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let (mut framed_tx, mut framed_rx) = Framed::new(stream, StrictLinesCodec::default()).split();
-    framed_tx
-        .send("Welcome to budgetchat! What shall I call you?".into())
-        .await?;
+pub struct Handler;
 
-    let Some(Ok(username)) = framed_rx.next().await else {
-        bail!("failed to get username");
-    };
+#[async_trait]
+impl ConnectionHandler for Handler {
+    type State = SharedState;
 
-    if username.is_empty() || username.chars().any(|c| !c.is_alphanumeric()) {
-        bail!("invalid username {username:?}")
-    }
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        addr: SocketAddr,
+        state: Self::State,
+    ) -> anyhow::Result<()> {
+        let (mut framed_tx, mut framed_rx) =
+            Framed::new(stream, StrictLinesCodec::default()).split();
+        framed_tx
+            .send("Welcome to budgetchat! What shall I call you?".into())
+            .await?;
 
-    let message = {
-        let usernames = state
-            .peers
-            .iter()
-            .map(|guard| guard.val().username.as_str().to_owned())
-            .collect::<Vec<String>>();
-        format!("* The room contains: {}", usernames.join(", "))
-    };
-    framed_tx.send(message).await?;
+        let Some(Ok(username)) = framed_rx.next().await else {
+            bail!("failed to get username");
+        };
 
-    let (tx, rx) = mpsc::unbounded_channel();
-    state.peers.insert(
-        addr,
-        Peer {
-            tx,
-            username: username.clone(),
-        },
-    );
-
-    let message = format!("* {username} has entered the chat");
-    state.broadcast(addr, &message)?;
-
-    let rx_stream = stream::unfold(rx, |mut rx| async {
-        rx.recv().await.map(|message| (message, rx))
-    })
-    .map(|message| anyhow::Ok(Action::ReceivedMessage(message)));
-
-    let tx_stream = framed_rx
-        .map(|message| {
-            message.map(|message| Action::SentMessage(format!("[{username}] {message}")))
-        })
-        .chain(stream::once(async { Ok(Action::Disconnect) }));
-
-    let stream = (rx_stream, tx_stream).merge();
-    let mut stream = pin!(stream);
-
-    while let Some(action) = stream.next().await {
-        match action {
-            Ok(Action::ReceivedMessage(message)) => {
-                framed_tx.send(message).await?;
-            }
-            Ok(Action::SentMessage(message)) => {
-                state.broadcast(addr, &message)?;
-            }
-            Ok(Action::Disconnect) => break,
-            Err(e) => bail!(
-                "an error occurred while processing messages for {}; error = {:?}",
-                username,
-                e
-            ),
+        if username.is_empty() || username.chars().any(|c| !c.is_alphanumeric()) {
+            bail!("invalid username {username:?}")
         }
+
+        let message = {
+            let usernames = state
+                .peers
+                .iter()
+                .map(|guard| guard.val().username.as_str().to_owned())
+                .collect::<Vec<String>>();
+            format!("* The room contains: {}", usernames.join(", "))
+        };
+        framed_tx.send(message).await?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        state.peers.insert(
+            addr,
+            Peer {
+                tx,
+                username: username.clone(),
+            },
+        );
+
+        let message = format!("* {username} has entered the chat");
+        state.broadcast(addr, &message)?;
+
+        let rx_stream = stream::unfold(rx, |mut rx| async {
+            rx.recv().await.map(|message| (message, rx))
+        })
+        .map(|message| anyhow::Ok(Action::ReceivedMessage(message)));
+
+        let tx_stream = framed_rx
+            .map(|message| {
+                message.map(|message| Action::SentMessage(format!("[{username}] {message}")))
+            })
+            .chain(stream::once(async { Ok(Action::Disconnect) }));
+
+        let stream = (rx_stream, tx_stream).merge();
+        let mut stream = pin!(stream);
+
+        while let Some(action) = stream.next().await {
+            match action {
+                Ok(Action::ReceivedMessage(message)) => {
+                    framed_tx.send(message).await?;
+                }
+                Ok(Action::SentMessage(message)) => {
+                    state.broadcast(addr, &message)?;
+                }
+                Ok(Action::Disconnect) => break,
+                Err(e) => bail!(
+                    "an error occurred while processing messages for {}; error = {:?}",
+                    username,
+                    e
+                ),
+            }
+        }
+
+        state.peers.remove(&addr);
+
+        let message = format!("* {username} has left the chat");
+        state.broadcast(addr, &message)?;
+
+        Ok(())
     }
-
-    state.peers.remove(&addr);
-
-    let message = format!("* {username} has left the chat");
-    state.broadcast(addr, &message)?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -134,7 +144,8 @@ mod tests {
             .write(b"* The room contains: \n")
             .build();
 
-        let _ = handle(stream, "127.0.0.1:8080".parse()?, Default::default()).await;
+        let state: SharedState = Default::default();
+        let _ = Handler::handle_connection(stream, "127.0.0.1:8080".parse()?, state).await;
 
         Ok(())
     }

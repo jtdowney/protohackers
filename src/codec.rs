@@ -116,8 +116,9 @@ impl<Req: for<'a> Deserialize<'a>, Resp: Serialize> Encoder<Resp> for JsonLinesC
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde::{Deserialize, Serialize};
+
+    use super::*;
 
     #[test]
     fn strict_lines_codec_decode() -> anyhow::Result<()> {

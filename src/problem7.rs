@@ -1,51 +1,67 @@
-mod codec;
-mod socket;
-
 use std::net::{Ipv4Addr, SocketAddr};
 
+use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{info, trace, warn};
 
-use crate::problem7::socket::LrcpListener;
+use crate::{
+    problem7::socket::LrcpListener,
+    server::{ConnectionHandler, Server},
+};
 
-pub async fn start(port: u16) -> anyhow::Result<()> {
-    let bind = (Ipv4Addr::UNSPECIFIED, port);
-    let mut listener = LrcpListener::bind(bind).await?;
-    info!("listening on on {bind:?}");
+mod codec;
+mod socket;
 
-    loop {
-        let (stream, addr) = listener.accept().await?;
-        info!("connection from {addr}");
+pub struct LrcpHandler;
 
-        tokio::spawn(async move {
-            if let Err(e) = handle(stream, addr).await {
-                warn!(error = ?e, "error handling client");
+#[async_trait]
+impl ConnectionHandler for LrcpHandler {
+    type State = ();
+
+    async fn handle_connection(
+        stream: impl AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        _addr: SocketAddr,
+        _state: Self::State,
+    ) -> anyhow::Result<()> {
+        let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(10000));
+        while let Some(frame) = framed.next().await {
+            match frame {
+                Ok(line) => {
+                    let reversed = line.chars().rev().collect::<String>();
+                    trace!(?line, ?reversed, "received data");
+
+                    framed.send(reversed).await?;
+                }
+                Err(e) => {
+                    warn!("error reading application frame: {}", e);
+                    continue;
+                }
             }
-        });
+        }
+
+        Ok(())
     }
 }
 
-async fn handle<T>(stream: T, _addr: SocketAddr) -> anyhow::Result<()>
-where
-    T: AsyncRead + AsyncWrite + Unpin,
-{
-    let mut framed = Framed::new(stream, LinesCodec::new_with_max_length(10000));
-    while let Some(frame) = framed.next().await {
-        match frame {
-            Ok(line) => {
-                let reversed = line.chars().rev().collect::<String>();
-                trace!(?line, ?reversed, "received data");
+pub struct LrcpServer;
 
-                framed.send(reversed).await?;
-            }
-            Err(e) => {
-                warn!("error reading application frame: {}", e);
-                continue;
-            }
+impl Server for LrcpServer {
+    async fn start(port: u16) -> anyhow::Result<()> {
+        let bind = (Ipv4Addr::UNSPECIFIED, port);
+        let mut listener = LrcpListener::bind(bind).await?;
+        info!("listening on {bind:?}");
+
+        loop {
+            let (stream, addr) = listener.accept().await?;
+            info!("connection from {addr}");
+
+            tokio::spawn(async move {
+                if let Err(e) = LrcpHandler::handle_connection(stream, addr, ()).await {
+                    warn!(error = ?e, "error handling client");
+                }
+            });
         }
     }
-
-    Ok(())
 }
