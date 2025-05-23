@@ -152,10 +152,9 @@ impl ConnectionHandler for Handler {
                                         .iter()
                                         .flat_map(|name| {
                                             let mut path = format!("{directory}{name}");
-                                            let file =
-                                                state.files.get(&path).map(|revisions| {
-                                                    format!("{name} r{}", revisions.len())
-                                                });
+                                            let file = state.files.get(&path).map(|revisions| {
+                                                format!("{name} r{}", revisions.len())
+                                            });
 
                                             path.push('/');
                                             let directory = state
