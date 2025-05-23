@@ -11,16 +11,16 @@ panic = "abort"
 
 [dependencies]
 anyhow = "1"
-argh = "0.1.9"
+argh = "0.1.13"
 async-trait = "0.1"
 blake3 = "1"
 bytes = "1"
 futures-concurrency = "7"
-futures-util = { version = "0.3.25", features = ["sink"] }
+futures-util = { version = "0.3.31", features = ["sink"] }
 itertools = "0.14.0"
 lockfree = "0.5.1"
 nom = { version = "8", features = ["alloc"] }
-parking_lot = "0.12.1"
+parking_lot = "0.12.3"
 pin-project = "1"
 primes = "0.4.0"
 priority-queue = "2"
@@ -29,9 +29,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7.4", features = ["codec", "net"] }
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tokio-util = { version = "0.7.15", features = ["codec", "net"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [dev-dependencies]
-tokio-test = "0.4.2"
+tokio-test = "0.4.4"
