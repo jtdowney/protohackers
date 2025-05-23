@@ -6,6 +6,7 @@ mod codec;
 mod problem0;
 mod problem1;
 mod problem10;
+mod problem11;
 mod problem2;
 mod problem3;
 mod problem4;
@@ -41,10 +42,11 @@ async fn main() -> anyhow::Result<()> {
     let server8 = tokio::spawn(TcpServer::<problem8::Handler>::start(port + 8));
     let server9 = tokio::spawn(TcpServer::<problem9::Handler>::start(port + 9));
     let server10 = tokio::spawn(TcpServer::<problem10::Handler>::start(port + 10));
+    let server11 = tokio::spawn(TcpServer::<problem11::Handler>::start(port + 11));
 
     let _ = tokio::join!(
         server0, server1, server2, server3, server4, server5, server6, server7, server8, server9,
-        server10
+        server10, server11
     );
 
     Ok(())
