@@ -19,29 +19,33 @@ pub trait ConnectionHandler: Send + Sync + 'static {
 }
 
 pub trait Server {
-    async fn start(port: u16) -> anyhow::Result<()>;
+    fn start(
+        port: u16,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static;
 }
 
 pub struct TcpServer<H: ConnectionHandler>(std::marker::PhantomData<H>);
 
 impl<H: ConnectionHandler> Server for TcpServer<H> {
-    async fn start(port: u16) -> anyhow::Result<()> {
-        let bind = (Ipv4Addr::UNSPECIFIED, port);
-        let listener = TcpListener::bind(bind).await?;
-        info!("listening on {bind:?}");
+    fn start(
+        port: u16,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static {
+        async move {
+            let bind = (Ipv4Addr::UNSPECIFIED, port);
+            let listener = TcpListener::bind(bind).await?;
+            let state = H::State::default();
 
-        let state = H::State::default();
+            loop {
+                let (stream, addr) = listener.accept().await?;
+                info!("connection from {addr}");
 
-        loop {
-            let (stream, addr) = listener.accept().await?;
-            info!("connection from {addr}");
-
-            let state = state.clone();
-            tokio::spawn(async move {
-                if let Err(e) = H::handle_connection(stream, addr, state).await {
-                    warn!(error = ?e, "error handling client");
-                }
-            });
+                let state = state.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = H::handle_connection(stream, addr, state).await {
+                        warn!(error = ?e, "error handling client");
+                    }
+                });
+            }
         }
     }
 }

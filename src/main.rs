@@ -1,4 +1,10 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use argh::FromArgs;
+use futures_util::future::join_all;
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::server::{Server, TcpServer};
 
@@ -25,29 +31,68 @@ struct Args {
     port: u16,
 }
 
+/// Configuration for a server instance
+struct ServerConfig {
+    name: &'static str,
+    port_offset: u16,
+    starter: fn(u16) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+}
+
+impl ServerConfig {
+    fn new<S: Server>(
+        name: &'static str,
+        port_offset: u16,
+    ) -> Self {
+        Self {
+            name,
+            port_offset,
+            starter: |port| Box::pin(S::start(port)),
+        }
+    }
+}
+
+/// Creates all the servers to start
+fn create_servers() -> Vec<ServerConfig> {
+    vec![
+        ServerConfig::new::<TcpServer<problem0::Handler>>("problem0", 0),
+        ServerConfig::new::<TcpServer<problem1::Handler>>("problem1", 1),
+        ServerConfig::new::<TcpServer<problem2::Handler>>("problem2", 2),
+        ServerConfig::new::<TcpServer<problem3::Handler>>("problem3", 3),
+        ServerConfig::new::<problem4::KvStoreServer>("problem4", 4),
+        ServerConfig::new::<TcpServer<problem5::Handler>>("problem5", 5),
+        ServerConfig::new::<TcpServer<problem6::Handler>>("problem6", 6),
+        ServerConfig::new::<problem7::LrcpServer>("problem7", 7),
+        ServerConfig::new::<TcpServer<problem8::Handler>>("problem8", 8),
+        ServerConfig::new::<TcpServer<problem9::Handler>>("problem9", 9),
+        ServerConfig::new::<TcpServer<problem10::Handler>>("problem10", 10),
+        ServerConfig::new::<TcpServer<problem11::Handler>>("problem11", 11),
+    ]
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let Args { port } = argh::from_env();
 
-    let server0 = tokio::spawn(TcpServer::<problem0::Handler>::start(port));
-    let server1 = tokio::spawn(TcpServer::<problem1::Handler>::start(port + 1));
-    let server2 = tokio::spawn(TcpServer::<problem2::Handler>::start(port + 2));
-    let server3 = tokio::spawn(TcpServer::<problem3::Handler>::start(port + 3));
-    let server4 = tokio::spawn(problem4::KvStoreServer::start(port + 4));
-    let server5 = tokio::spawn(TcpServer::<problem5::Handler>::start(port + 5));
-    let server6 = tokio::spawn(TcpServer::<problem6::Handler>::start(port + 6));
-    let server7 = tokio::spawn(problem7::LrcpServer::start(port + 7));
-    let server8 = tokio::spawn(TcpServer::<problem8::Handler>::start(port + 8));
-    let server9 = tokio::spawn(TcpServer::<problem9::Handler>::start(port + 9));
-    let server10 = tokio::spawn(TcpServer::<problem10::Handler>::start(port + 10));
-    let server11 = tokio::spawn(TcpServer::<problem11::Handler>::start(port + 11));
+    let servers = create_servers();
+    let mut handles: Vec<JoinHandle<anyhow::Result<()>>> = Vec::with_capacity(servers.len());
 
-    let _ = tokio::join!(
-        server0, server1, server2, server3, server4, server5, server6, server7, server8, server9,
-        server10, server11
-    );
+    for server_config in servers.iter() {
+        let server_port = port + server_config.port_offset;
+        info!("starting {} on port {}", server_config.name, server_port);
+        
+        let handle = tokio::spawn((server_config.starter)(server_port));
+        handles.push(handle);
+    }
+
+    // Wait for all servers to complete concurrently (they shouldn't under normal circumstances)
+    let results = join_all(handles).await;
+    for (i, result) in results.into_iter().enumerate() {
+        if let Err(e) = result {
+            tracing::error!("server {} panicked: {:?}", servers[i].name, e);
+        }
+    }
 
     Ok(())
 }
