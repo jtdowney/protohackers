@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use async_trait::async_trait;
 use tokio::net::UdpSocket;
 use tracing::{trace, warn};
 
@@ -15,31 +16,28 @@ const VERSION: &str = "jtdowney protohackers";
 
 pub struct KvStoreServer;
 
+#[async_trait]
 impl Server for KvStoreServer {
-    fn start(
-        port: u16,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static {
-        async move {
-            let bind = (Ipv4Addr::UNSPECIFIED, port);
-            let socket = Arc::new(UdpSocket::bind(bind).await?);
+    async fn start(port: u16) -> anyhow::Result<()> {
+        let bind = (Ipv4Addr::UNSPECIFIED, port);
+        let socket = Arc::new(UdpSocket::bind(bind).await?);
 
-            let state = SharedState::default();
+        let state = SharedState::default();
 
-            loop {
-                let socket = socket.clone();
-                let mut buffer = [0; 1000];
-                let (n, addr) = socket.recv_from(&mut buffer).await?;
-                let data = buffer[0..n].to_vec();
+        loop {
+            let socket = socket.clone();
+            let mut buffer = [0; 1000];
+            let (n, addr) = socket.recv_from(&mut buffer).await?;
+            let data = buffer[0..n].to_vec();
 
-                let state = state.clone();
-                tokio::spawn(async move {
-                    trace!("{n} byte datagram from {addr}");
+            let state = state.clone();
+            tokio::spawn(async move {
+                trace!("{n} byte datagram from {addr}");
 
-                    if let Err(e) = handle_message(socket, data, addr, state).await {
-                        warn!(error = ?e, "error handling client");
-                    }
-                });
-            }
+                if let Err(e) = handle_message(socket, data, addr, state).await {
+                    warn!(error = ?e, "error handling client");
+                }
+            });
         }
     }
 }

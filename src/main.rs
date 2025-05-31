@@ -31,18 +31,17 @@ struct Args {
     port: u16,
 }
 
+type ServerFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>;
+
 /// Configuration for a server instance
 struct ServerConfig {
     name: &'static str,
     port_offset: u16,
-    starter: fn(u16) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'static>>,
+    starter: fn(u16) -> ServerFuture,
 }
 
 impl ServerConfig {
-    fn new<S: Server>(
-        name: &'static str,
-        port_offset: u16,
-    ) -> Self {
+    fn new<S: Server>(name: &'static str, port_offset: u16) -> Self {
         Self {
             name,
             port_offset,
@@ -81,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     for server_config in servers.iter() {
         let server_port = port + server_config.port_offset;
         info!("starting {} on port {}", server_config.name, server_port);
-        
+
         let handle = tokio::spawn((server_config.starter)(server_port));
         handles.push(handle);
     }

@@ -47,24 +47,21 @@ impl ConnectionHandler for LrcpHandler {
 
 pub struct LrcpServer;
 
+#[async_trait]
 impl Server for LrcpServer {
-    fn start(
-        port: u16,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + std::marker::Send + 'static {
-        async move {
-            let bind = (Ipv4Addr::UNSPECIFIED, port);
-            let mut listener = LrcpListener::bind(bind).await?;
+    async fn start(port: u16) -> anyhow::Result<()> {
+        let bind = (Ipv4Addr::UNSPECIFIED, port);
+        let mut listener = LrcpListener::bind(bind).await?;
 
-            loop {
-                let (stream, addr) = listener.accept().await?;
-                info!("connection from {addr}");
+        loop {
+            let (stream, addr) = listener.accept().await?;
+            info!("connection from {addr}");
 
-                tokio::spawn(async move {
-                    if let Err(e) = LrcpHandler::handle_connection(stream, addr, ()).await {
-                        warn!(error = ?e, "error handling client");
-                    }
-                });
-            }
+            tokio::spawn(async move {
+                if let Err(e) = LrcpHandler::handle_connection(stream, addr, ()).await {
+                    warn!(error = ?e, "error handling client");
+                }
+            });
         }
     }
 }
