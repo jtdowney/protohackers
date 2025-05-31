@@ -1,5 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 use argh::FromArgs;
 use futures_util::future::join_all;

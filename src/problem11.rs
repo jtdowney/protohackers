@@ -433,8 +433,9 @@ impl Handler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio_test::io::Builder;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_handler_hello_exchange() {

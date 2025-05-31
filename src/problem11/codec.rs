@@ -1,3 +1,5 @@
+use std::io;
+
 use bytes::{BufMut, BytesMut};
 use nom::{
     IResult, Parser,
@@ -7,7 +9,6 @@ use nom::{
     multi::count,
     number::streaming::{be_u8, be_u32},
 };
-use std::io;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -336,9 +337,10 @@ impl Encoder<Message> for PestControlCodec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bytes::BytesMut;
     use tokio_util::codec::{Decoder, Encoder};
+
+    use super::*;
 
     #[test]
     fn test_decode_hello() {
