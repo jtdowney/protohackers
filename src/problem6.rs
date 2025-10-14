@@ -87,9 +87,10 @@ impl ConnectionHandler for Handler {
                     Some(Err(_)) => framed.send(ServerError::from("unable to parse message")).await?,
                     None => break,
                 },
-                ticket = dispatch_ticket(&mut role) => match ticket {
-                    Some(ticket) => framed.send(ticket).await?,
-                    None => continue,
+                ticket = dispatch_ticket(&mut role) => {
+                    if let Some(ticket) = ticket {
+                        framed.send(ticket).await?;
+                    }
                 },
                 _ = heartbeat_tick(heartbeat.as_mut()) => {
                     framed.send(ServerHeartbeat).await?;
@@ -100,8 +101,8 @@ impl ConnectionHandler for Handler {
         if let Role::Dispatcher { .. } = role {
             let mut state = state.lock();
 
-            for (_, dispatchers) in state.dispatchers.iter_mut() {
-                dispatchers.retain(|&(dispatcher_addr, _)| dispatcher_addr != addr)
+            for dispatchers in state.dispatchers.values_mut() {
+                dispatchers.retain(|&(dispatcher_addr, _)| dispatcher_addr != addr);
             }
 
             state
@@ -210,7 +211,7 @@ where
                 *heartbeat = None;
             } else {
                 trace!("[{}] enabled heartbeats at {}", addr, interval);
-                let duration = Duration::from_millis(interval as u64 * 100);
+                let duration = Duration::from_millis(u64::from(interval) * 100);
                 let interval = tokio::time::interval(duration);
                 *heartbeat = Some(interval);
             }
@@ -273,7 +274,7 @@ async fn check_for_ticket(state: SharedState, plate: String, road: Road) -> anyh
         });
 
     if let Some(ticket) = speeding_ticket {
-        issue_ticket(state.clone(), ticket).await?
+        issue_ticket(&state, ticket)?;
     }
 
     Ok(())
@@ -285,9 +286,12 @@ fn check_speed(
     timestamp2: Timestamp,
     camera2: Camera,
 ) -> Option<u16> {
-    let cmph_limit = camera1.limit as u32 * 100;
-    let centimiles_traveled = (camera1.mile as i32 - camera2.mile as i32).unsigned_abs() * 100;
-    let time_traveled = (timestamp1 as i64 - timestamp2 as i64).unsigned_abs() as u32;
+    let cmph_limit = u32::from(camera1.limit) * 100;
+    let centimiles_traveled =
+        (i32::from(camera1.mile) - i32::from(camera2.mile)).unsigned_abs() * 100;
+    #[allow(clippy::cast_possible_truncation)]
+    let time_traveled = (i64::from(timestamp1) - i64::from(timestamp2)).unsigned_abs() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let cmph_traveled =
         (f64::from(centimiles_traveled) / f64::from(time_traveled) * 60.0 * 60.0) as u32;
 
@@ -297,14 +301,16 @@ fn check_speed(
     );
 
     if cmph_traveled > cmph_limit {
-        Some(cmph_traveled as u16)
+        #[allow(clippy::cast_possible_truncation)]
+        let speed = cmph_traveled as u16;
+        Some(speed)
     } else {
         None
     }
 }
 
-async fn issue_ticket(
-    state: SharedState,
+fn issue_ticket(
+    state: &SharedState,
     ticket @ Ticket {
         road,
         timestamp1,
@@ -332,16 +338,13 @@ async fn issue_ticket(
             .cloned()
     };
 
-    match dispatcher {
-        Some((_, tx)) => {
-            trace!("sending ticket to a dispatcher");
-            tx.send(ticket)?;
-        }
-        _ => {
-            trace!(?ticket, "unable to dispatch ticket, saving");
-            let mut state = state.lock();
-            state.pending_tickets.push(ticket);
-        }
+    if let Some((_, tx)) = dispatcher {
+        trace!("sending ticket to a dispatcher");
+        tx.send(ticket)?;
+    } else {
+        trace!(?ticket, "unable to dispatch ticket, saving");
+        let mut state = state.lock();
+        state.pending_tickets.push(ticket);
     }
 
     Ok(())
@@ -356,5 +359,7 @@ async fn heartbeat_tick(maybe_heartbeat: Option<&mut Interval>) -> Instant {
 }
 
 fn timestamp_to_date(timestamp: Timestamp) -> u32 {
-    (f64::from(timestamp) / 86400.0).floor() as u32
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let date = (f64::from(timestamp) / 86400.0).floor() as u32;
+    date
 }

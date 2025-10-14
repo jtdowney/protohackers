@@ -144,7 +144,7 @@ mod tests {
             .write(b"* The room contains: \n")
             .build();
 
-        let state: SharedState = Default::default();
+        let state: SharedState = Arc::default();
         let _ = Handler::handle_connection(stream, "127.0.0.1:8080".parse()?, state).await;
 
         Ok(())

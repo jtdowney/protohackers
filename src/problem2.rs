@@ -102,8 +102,12 @@ impl ConnectionHandler for Handler {
                     }
 
                     let total = items.iter().sum::<isize>();
-                    let mean = total / items.len() as isize;
-                    framed.send(mean as i32).await?;
+                    #[allow(clippy::cast_possible_wrap)]
+                    let count = items.len() as isize;
+                    let mean = total / count;
+                    #[allow(clippy::cast_possible_truncation)]
+                    let result = mean as i32;
+                    framed.send(result).await?;
                 }
             }
         }

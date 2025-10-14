@@ -129,7 +129,7 @@ impl SiteManager {
             };
 
             match (
-                self.current_policies.get(&target.species).cloned(),
+                self.current_policies.get(&target.species).copied(),
                 desired_action,
             ) {
                 (Some((policy_id, _)), None) => {
@@ -210,7 +210,7 @@ impl SiteManager {
                                 AuthorityError::Other(msg) => {
                                     return Err(anyhow!("error deleting policy: {}", msg));
                                 }
-                                _ => {
+                                AuthorityError::PolicyAlreadyExists => {
                                     return Err(anyhow!("error deleting policy: {}", message));
                                 }
                             }
@@ -349,7 +349,7 @@ impl ConnectionHandler for Handler {
                     return Ok(());
                 }
             }
-            Some(Ok(_)) | Some(Err(_)) => {
+            Some(Ok(_) | Err(_)) => {
                 send_error(&mut sink, "first message must be Hello").await?;
                 return Ok(());
             }
@@ -362,8 +362,7 @@ impl ConnectionHandler for Handler {
             match msg {
                 Ok(Message::SiteVisit { site, populations }) => {
                     if let Err(e) = state.handle_site_visit(site, &populations).await {
-                        send_error(&mut sink, format!("Error processing site visit: {}", e))
-                            .await?;
+                        send_error(&mut sink, format!("Error processing site visit: {e}")).await?;
                         return Err(e);
                     }
                 }
@@ -372,7 +371,7 @@ impl ConnectionHandler for Handler {
                     return Ok(());
                 }
                 Err(e) => {
-                    send_error(&mut sink, format!("Error: {}", e)).await?;
+                    send_error(&mut sink, format!("Error: {e}")).await?;
                     return Ok(());
                 }
             }

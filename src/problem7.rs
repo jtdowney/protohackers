@@ -36,7 +36,6 @@ impl ConnectionHandler for LrcpHandler {
                 }
                 Err(e) => {
                     warn!("error reading application frame: {}", e);
-                    continue;
                 }
             }
         }

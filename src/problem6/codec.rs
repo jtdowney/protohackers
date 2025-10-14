@@ -99,7 +99,9 @@ impl Encoder<Ticket> for SpeedDaemonCodec {
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
         dst.put_u8(0x21);
-        dst.put_u8(plate.len() as u8);
+        #[allow(clippy::cast_possible_truncation)]
+        let len = plate.len() as u8;
+        dst.put_u8(len);
         dst.put_slice(plate.as_bytes());
         dst.put_u16(road);
         dst.put_u16(mile1);
@@ -131,7 +133,9 @@ impl<'a> Encoder<ServerError<'a>> for SpeedDaemonCodec {
         dst: &mut BytesMut,
     ) -> Result<(), Self::Error> {
         dst.put_u8(0x10);
-        dst.put_u8(message.len() as u8);
+        #[allow(clippy::cast_possible_truncation)]
+        let len = message.len() as u8;
+        dst.put_u8(len);
         dst.put_slice(message.as_bytes());
 
         Ok(())

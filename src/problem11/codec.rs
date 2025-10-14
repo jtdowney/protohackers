@@ -199,8 +199,10 @@ fn parse_message_content(input: &[u8]) -> IResult<&[u8], Message> {
 }
 
 fn calculate_checksum(data: &[u8]) -> u8 {
-    let sum = data.iter().map(|&b| b as u32).sum::<u32>();
-    (256 - (sum % 256)) as u8
+    let sum = data.iter().map(|&b| u32::from(b)).sum::<u32>();
+    #[allow(clippy::cast_possible_truncation)]
+    let result = (256 - (sum % 256)) as u8;
+    result
 }
 
 impl Decoder for PestControlCodec {
@@ -242,7 +244,9 @@ impl Decoder for PestControlCodec {
 }
 
 fn encode_string(dst: &mut BytesMut, s: &str) {
-    dst.put_u32(s.len() as u32);
+    #[allow(clippy::cast_possible_truncation)]
+    let len = s.len() as u32;
+    dst.put_u32(len);
     dst.put_slice(s.as_bytes());
 }
 
@@ -250,7 +254,9 @@ fn encode_array<T, F>(dst: &mut BytesMut, items: &[T], encoder: F)
 where
     F: Fn(&mut BytesMut, &T),
 {
-    dst.put_u32(items.len() as u32);
+    #[allow(clippy::cast_possible_truncation)]
+    let len = items.len() as u32;
+    dst.put_u32(len);
     for item in items {
         encoder(dst, item);
     }
@@ -265,7 +271,7 @@ impl Encoder<Message> for PestControlCodec {
         dst.put_u8(0);
         dst.put_u32(0);
 
-        let (_msg_type, _) = match &item {
+        let (_msg_type, ()) = match &item {
             Message::Hello { protocol, version } => {
                 dst[start_len] = 0x50;
                 encode_string(dst, protocol);
@@ -327,6 +333,7 @@ impl Encoder<Message> for PestControlCodec {
             }
         };
 
+        #[allow(clippy::cast_possible_truncation)]
         let length = (dst.len() - start_len + 1) as u32;
         dst[start_len + 1..start_len + 5].copy_from_slice(&length.to_be_bytes());
         let checksum = calculate_checksum(&dst[start_len..]);

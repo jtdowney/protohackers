@@ -36,9 +36,134 @@ impl Default for State {
 
         Self {
             directories,
-            blobs: Default::default(),
-            files: Default::default(),
+            blobs: HashMap::default(),
+            files: HashMap::default(),
         }
+    }
+}
+
+fn handle_get_command(state: &SharedState, file: &str, revision: Option<usize>) -> Reply {
+    debug!(file, revision, "getting file");
+
+    let data = {
+        let state = state.read();
+        state
+            .files
+            .get(file)
+            .and_then(|revisions| {
+                let revision = revision.unwrap_or(revisions.len());
+                revisions
+                    .get(revision - 1)
+                    .and_then(|blob| state.blobs.get(blob))
+            })
+            .cloned()
+    };
+
+    match data {
+        Some(bytes) => Reply::OkWithData(bytes),
+        _ => Reply::Error("no such file".into()),
+    }
+}
+
+fn handle_put_command(state: &SharedState, file: String, data: Vec<u8>) -> Reply {
+    debug!(file, n = data.len(), "putting file");
+
+    let hash: [u8; 32] = blake3::hash(&data).into();
+    {
+        let mut state = state.write();
+        state.blobs.entry(hash).or_insert_with(|| data.into());
+    }
+
+    let mut parts = file.split('/');
+    let _ = parts.next();
+    let mut parts = parts.collect::<Vec<_>>();
+    let filename = parts.pop().unwrap();
+
+    let mut path = String::from("/");
+    for part in parts {
+        let mut state = state.write();
+        state
+            .directories
+            .entry(path.clone())
+            .or_default()
+            .insert(part.into());
+
+        path = format!("{path}{part}/");
+        state.directories.entry(path.clone()).or_default();
+    }
+
+    let revision = {
+        let mut state = state.write();
+        state
+            .directories
+            .entry(path)
+            .or_default()
+            .insert(filename.into());
+        let revisions = state.files.entry(file).or_default();
+        if revisions.is_empty() {
+            revisions.push(hash);
+        } else {
+            let last = revisions.last().unwrap();
+            if last != &hash {
+                revisions.push(hash);
+            }
+        }
+
+        revisions.len()
+    };
+
+    let message = format!("r{revision}");
+    Reply::OkWithMessage(message)
+}
+
+fn handle_list_command(state: &SharedState, mut directory: String) -> Vec<String> {
+    if !directory.ends_with('/') {
+        directory.push('/');
+    }
+
+    debug!(directory, "listing");
+
+    let mut entries = {
+        let state = state.read();
+        state
+            .directories
+            .get(&directory)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|name| {
+                        let mut path = format!("{directory}{name}");
+                        let file = state
+                            .files
+                            .get(&path)
+                            .map(|revisions| format!("{name} r{}", revisions.len()));
+
+                        path.push('/');
+                        let directory =
+                            state.directories.get(&path).map(|_| format!("{name}/ DIR"));
+                        file.or(directory)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+
+    entries.sort();
+    entries
+}
+
+fn format_error_message(e: ParseError) -> Option<String> {
+    match e {
+        ParseError::MalformedCommand(PlainCommand::Get) => {
+            Some("usage: GET file [revision]".into())
+        }
+        ParseError::MalformedCommand(PlainCommand::Put) => {
+            Some("usage: PUT file length newline data".into())
+        }
+        ParseError::MalformedCommand(PlainCommand::List) => Some("usage: LIST dir".into()),
+        ParseError::MalformedString => Some("strings must be UTF8 valid".into()),
+        ParseError::UnknownCommand(command) => Some(format!("illegal method: {command}")),
+        ParseError::MalformedCommand(PlainCommand::Help) | ParseError::Network(_) => None,
     }
 }
 
@@ -60,116 +185,15 @@ impl ConnectionHandler for Handler {
             match framed.next().await {
                 Some(Ok(command)) => match command {
                     Command::Get { file, revision } => {
-                        debug!(file, revision, "getting file");
-
-                        let data = {
-                            let state = state.read();
-                            state
-                                .files
-                                .get(&file)
-                                .and_then(|revisions| {
-                                    let revision = revision.unwrap_or(revisions.len());
-                                    revisions
-                                        .get(revision - 1)
-                                        .and_then(|blob| state.blobs.get(blob))
-                                })
-                                .cloned()
-                        };
-
-                        match data {
-                            Some(bytes) => {
-                                framed.send(Reply::OkWithData(bytes)).await?;
-                            }
-                            _ => {
-                                framed.send(Reply::Error("no such file".into())).await?;
-                            }
-                        }
+                        let reply = handle_get_command(&state, &file, revision);
+                        framed.send(reply).await?;
                     }
                     Command::Put { file, data } => {
-                        debug!(file, n = data.len(), "putting file");
-
-                        let hash: [u8; 32] = blake3::hash(&data).into();
-                        {
-                            let mut state = state.write();
-                            state.blobs.entry(hash).or_insert_with(|| data.into());
-                        }
-
-                        let mut parts = file.split('/');
-                        let _ = parts.next();
-                        let mut parts = parts.collect::<Vec<_>>();
-                        let filename = parts.pop().unwrap();
-
-                        let mut path = String::from("/");
-                        for part in parts {
-                            let mut state = state.write();
-                            state
-                                .directories
-                                .entry(path.clone())
-                                .or_default()
-                                .insert(part.into());
-
-                            path = format!("{path}{part}/");
-                            state.directories.entry(path.clone()).or_default();
-                        }
-
-                        let revision = {
-                            let mut state = state.write();
-                            state
-                                .directories
-                                .entry(path)
-                                .or_default()
-                                .insert(filename.into());
-                            let revisions = state.files.entry(file).or_default();
-                            if revisions.is_empty() {
-                                revisions.push(hash);
-                            } else {
-                                let last = revisions.last().unwrap();
-                                if last != &hash {
-                                    revisions.push(hash);
-                                }
-                            }
-
-                            revisions.len()
-                        };
-
-                        let message = format!("r{revision}");
-                        framed.send(Reply::OkWithMessage(message)).await?;
+                        let reply = handle_put_command(&state, file, data);
+                        framed.send(reply).await?;
                     }
-                    Command::List { mut directory } => {
-                        if !directory.ends_with('/') {
-                            directory.push('/');
-                        }
-
-                        debug!(directory, "listing");
-
-                        let mut entries = {
-                            let state = state.read();
-                            state
-                                .directories
-                                .get(&directory)
-                                .map(|entries| {
-                                    entries
-                                        .iter()
-                                        .flat_map(|name| {
-                                            let mut path = format!("{directory}{name}");
-                                            let file = state.files.get(&path).map(|revisions| {
-                                                format!("{name} r{}", revisions.len())
-                                            });
-
-                                            path.push('/');
-                                            let directory = state
-                                                .directories
-                                                .get(&path)
-                                                .map(|_| format!("{name}/ DIR"));
-                                            file.or(directory)
-                                        })
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default()
-                        };
-
-                        entries.sort();
-
+                    Command::List { directory } => {
+                        let entries = handle_list_command(&state, directory);
                         framed.send(Reply::OkWithCount(entries.len())).await?;
                         for entry in entries {
                             framed.send(entry).await?;
@@ -178,30 +202,18 @@ impl ConnectionHandler for Handler {
                 },
                 Some(Err(e)) => {
                     warn!(error = ?e, "error reading frame");
-                    let message = match e {
-                        ParseError::MalformedCommand(PlainCommand::Help) => {
-                            framed
-                                .send(Reply::OkWithMessage("usage: HELP|GET|PUT|LIST".into()))
-                                .await?;
-                            continue;
-                        }
-                        ParseError::MalformedCommand(PlainCommand::Get) => {
-                            "usage: GET file [revision]".into()
-                        }
-                        ParseError::MalformedCommand(PlainCommand::Put) => {
-                            "usage: PUT file length newline data".into()
-                        }
-                        ParseError::MalformedCommand(PlainCommand::List) => {
-                            "usage: LIST dir".into()
-                        }
-                        ParseError::MalformedString => "strings must be UTF8 valid".into(),
-                        ParseError::UnknownCommand(command) => {
-                            format!("illegal method: {command}")
-                        }
-                        ParseError::Network(_) => break,
-                    };
-
-                    framed.send(Reply::Error(message)).await?;
+                    if let ParseError::MalformedCommand(PlainCommand::Help) = e {
+                        framed
+                            .send(Reply::OkWithMessage("usage: HELP|GET|PUT|LIST".into()))
+                            .await?;
+                        continue;
+                    }
+                    if let ParseError::Network(_) = e {
+                        break;
+                    }
+                    if let Some(message) = format_error_message(e) {
+                        framed.send(Reply::Error(message)).await?;
+                    }
                 }
                 None => break,
             }

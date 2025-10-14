@@ -19,19 +19,16 @@ impl Decoder for StrictLinesCodec {
             .iter()
             .position(|b| *b == b'\n');
 
-        match newline_offset {
-            Some(offset) => {
-                let newline_index = offset + self.next_index;
-                self.next_index = 0;
-                let line = buf.split_to(newline_index + 1);
-                let line = &line[..line.len() - 1];
-                let line = str::from_utf8(line)?;
-                Ok(Some(line.to_string()))
-            }
-            None => {
-                self.next_index = read_to;
-                Ok(None)
-            }
+        if let Some(offset) = newline_offset {
+            let newline_index = offset + self.next_index;
+            self.next_index = 0;
+            let line = buf.split_to(newline_index + 1);
+            let line = &line[..line.len() - 1];
+            let line = str::from_utf8(line)?;
+            Ok(Some(line.to_string()))
+        } else {
+            self.next_index = read_to;
+            Ok(None)
         }
     }
 
@@ -65,8 +62,8 @@ impl<Req: for<'a> Deserialize<'a>, Resp: Serialize> Default for JsonLinesCodec<R
     fn default() -> Self {
         Self {
             next_index: 0,
-            _req: Default::default(),
-            _resp: Default::default(),
+            _req: PhantomData,
+            _resp: PhantomData,
         }
     }
 }
@@ -81,19 +78,16 @@ impl<Req: for<'a> Deserialize<'a>, Resp: Serialize> Decoder for JsonLinesCodec<R
             .iter()
             .position(|b| *b == b'\n');
 
-        match newline_offset {
-            Some(offset) => {
-                let newline_index = offset + self.next_index;
-                self.next_index = 0;
-                let line = src.split_to(newline_index + 1);
-                let line = &line[..line.len() - 1];
-                let request = serde_json::from_slice(line)?;
-                Ok(Some(request))
-            }
-            None => {
-                self.next_index = read_to;
-                Ok(None)
-            }
+        if let Some(offset) = newline_offset {
+            let newline_index = offset + self.next_index;
+            self.next_index = 0;
+            let line = src.split_to(newline_index + 1);
+            let line = &line[..line.len() - 1];
+            let request = serde_json::from_slice(line)?;
+            Ok(Some(request))
+        } else {
+            self.next_index = read_to;
+            Ok(None)
         }
     }
 
@@ -179,7 +173,7 @@ mod tests {
     fn json_lines_codec_decode() -> anyhow::Result<()> {
         let mut codec = JsonLinesCodec::<TestRequest, TestResponse>::default();
         let json = r#"{"id":42,"name":"test"}"#;
-        let mut buf = BytesMut::from(format!("{}\n", json).as_str());
+        let mut buf = BytesMut::from(format!("{json}\n").as_str());
 
         let result = codec.decode(&mut buf)?;
         assert_eq!(

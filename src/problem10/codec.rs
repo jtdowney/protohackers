@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Write, io, str, sync::LazyLock};
+use std::{borrow::ToOwned, collections::HashSet, fmt::Write, io, str, sync::LazyLock};
 
 use bytes::{Buf, BufMut, Bytes};
 use nom::{
@@ -68,7 +68,7 @@ fn file_name(input: &[u8]) -> IResult<&[u8], String> {
                 s.starts_with('/') && !s.chars().any(|c| ILLEGAL_FILENAME_CHARACTERS.contains(&c))
             },
         ),
-        |s| s.to_owned(),
+        ToOwned::to_owned,
     );
     parser.parse(input)
 }

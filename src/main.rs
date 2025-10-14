@@ -76,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
     let servers = create_servers();
     let mut handles: Vec<JoinHandle<anyhow::Result<()>>> = Vec::with_capacity(servers.len());
 
-    for server_config in servers.iter() {
+    for server_config in &servers {
         let server_port = port + server_config.port_offset;
         info!("starting {} on port {}", server_config.name, server_port);
 

@@ -32,7 +32,9 @@ pub enum Message {
 
 fn positive_number(input: &str) -> IResult<&str, usize> {
     let mut parser = map(verify(nom::character::complete::i32, |&n| n >= 0), |n| {
-        n as usize
+        #[allow(clippy::cast_sign_loss)]
+        let result = n as usize;
+        result
     });
     parser.parse(input)
 }
@@ -172,7 +174,7 @@ mod tests {
         let (_, message) = message(r"/connect/1234567/").finish()?;
         assert_eq!(
             Message::Connect {
-                session_id: 1234567
+                session_id: 1_234_567
             },
             message
         );
@@ -189,14 +191,12 @@ mod tests {
     }
 
     #[test]
-    fn positive_number_rejects_negative_number() -> anyhow::Result<()> {
+    fn positive_number_rejects_negative_number() {
         let error = positive_number("-123").finish().unwrap_err();
         assert_eq!(
             nom::error::Error::new("-123", nom::error::ErrorKind::Verify),
             error
         );
-
-        Ok(())
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
         let (_, message) = message(r"/ack/1234567/89/").finish()?;
         assert_eq!(
             Message::Ack {
-                session_id: 1234567,
+                session_id: 1_234_567,
                 length: 89
             },
             message
@@ -218,7 +218,7 @@ mod tests {
         let (_, message) = message(r"/data/1234567/89/testing/").finish()?;
         assert_eq!(
             Message::Data {
-                session_id: 1234567,
+                session_id: 1_234_567,
                 position: 89,
                 payload: "testing".into()
             },
@@ -233,7 +233,7 @@ mod tests {
         let (_, message) = message(r"/data/1234567/89/foo\/bar\\baz/").finish()?;
         assert_eq!(
             Message::Data {
-                session_id: 1234567,
+                session_id: 1_234_567,
                 position: 89,
                 payload: r"foo/bar\baz".into()
             },
@@ -248,7 +248,7 @@ mod tests {
         let (_, message) = message("/data/1234567/89/hello\nworld/").finish()?;
         assert_eq!(
             Message::Data {
-                session_id: 1234567,
+                session_id: 1_234_567,
                 position: 89,
                 payload: "hello\nworld".into()
             },
@@ -263,7 +263,7 @@ mod tests {
         let (_, message) = message(r"/close/1234567/").finish()?;
         assert_eq!(
             Message::Close {
-                session_id: 1234567,
+                session_id: 1_234_567,
             },
             message
         );

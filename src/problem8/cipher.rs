@@ -50,21 +50,18 @@ impl Decoder for CipherSpecCodec {
         let read_to = src.len();
         let null_offset = src[self.next_index..read_to].iter().position(|&b| b == 0);
 
-        match null_offset {
-            Some(offset) => {
-                let newline_index = offset + self.next_index;
-                self.next_index = 0;
-                let input = src.split_to(newline_index + 1);
-                let input = &input[..input.len() - 1];
-                match cipher_spec(input) {
-                    Ok((_, spec)) => Ok(Some(spec)),
-                    Err(e) => bail!("error reading spec: {:?}", e),
-                }
+        if let Some(offset) = null_offset {
+            let newline_index = offset + self.next_index;
+            self.next_index = 0;
+            let input = src.split_to(newline_index + 1);
+            let input = &input[..input.len() - 1];
+            match cipher_spec(input) {
+                Ok((_, spec)) => Ok(Some(spec)),
+                Err(e) => bail!("error reading spec: {:?}", e),
             }
-            None => {
-                self.next_index = read_to;
-                Ok(None)
-            }
+        } else {
+            self.next_index = read_to;
+            Ok(None)
         }
     }
 }
@@ -79,22 +76,22 @@ pub enum CipherOperation {
 }
 
 impl CipherOperation {
-    fn forward(&self, byte: u8, position: u8) -> u8 {
+    fn forward(self, byte: u8, position: u8) -> u8 {
         match self {
             CipherOperation::ReverseBits => byte.reverse_bits(),
             CipherOperation::Xor(n) => byte ^ n,
             CipherOperation::XorPosition => byte ^ position,
-            CipherOperation::Add(n) => byte.wrapping_add(*n),
+            CipherOperation::Add(n) => byte.wrapping_add(n),
             CipherOperation::AddPosition => byte.wrapping_add(position),
         }
     }
 
-    fn reverse(&self, byte: u8, position: u8) -> u8 {
+    fn reverse(self, byte: u8, position: u8) -> u8 {
         match self {
             CipherOperation::ReverseBits => byte.reverse_bits(),
             CipherOperation::Xor(n) => byte ^ n,
             CipherOperation::XorPosition => byte ^ position,
-            CipherOperation::Add(n) => byte.wrapping_sub(*n),
+            CipherOperation::Add(n) => byte.wrapping_sub(n),
             CipherOperation::AddPosition => byte.wrapping_sub(position),
         }
     }
@@ -136,8 +133,10 @@ impl Cipher {
 
     pub fn seal_in_place(&mut self, buffer: &mut [u8]) {
         for byte in buffer.iter_mut() {
-            for op in &self.spec {
-                *byte = op.forward(*byte, (self.position % 256) as u8);
+            for &op in &self.spec {
+                #[allow(clippy::cast_possible_truncation)]
+                let position = (self.position % 256) as u8;
+                *byte = op.forward(*byte, position);
             }
 
             self.position += 1;
@@ -146,8 +145,10 @@ impl Cipher {
 
     pub fn open_in_place(&mut self, buffer: &mut [u8]) {
         for byte in buffer.iter_mut() {
-            for op in self.spec.iter().rev() {
-                *byte = op.reverse(*byte, (self.position % 256) as u8);
+            for &op in self.spec.iter().rev() {
+                #[allow(clippy::cast_possible_truncation)]
+                let position = (self.position % 256) as u8;
+                *byte = op.reverse(*byte, position);
             }
 
             self.position += 1;

@@ -83,7 +83,7 @@ impl LrcpListener {
         {
             tokio::spawn(async move {
                 if let Err(e) = message_loop(socket, state, connections_tx, write_rx).await {
-                    warn!(error = ?e, "error while processing message loop")
+                    warn!(error = ?e, "error while processing message loop");
                 }
             });
         }
@@ -107,7 +107,7 @@ impl LrcpListener {
 }
 
 fn send_chunked(
-    message_tx: mpsc::UnboundedSender<(Message, SocketAddr)>,
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
     session_id: usize,
     addr: SocketAddr,
     start: usize,
@@ -142,39 +142,30 @@ async fn message_loop(
         let message_tx = message_tx.clone();
         let connections_tx = connections_tx.clone();
 
-        house_keeping(state.clone(), message_tx.clone()).await?;
+        house_keeping(&state, &message_tx)?;
 
         tokio::select! {
             biased;
 
-            result = write_rx.recv() => match result {
-                Some(request) => dispatch_write_request(message_tx, state, request).await?,
-                None => {
-                    error!("data write channel closed");
-                    break
-                },
+            result = write_rx.recv() => if let Some(request) = result { dispatch_write_request(&message_tx, &state, request)? } else {
+                error!("data write channel closed");
+                break
             },
-            result = message_rx.recv() => match result {
-                Some(message) => {
-                    framed.send(message).await?;
-                }
-                None => {
-                    error!("message write channel closed");
-                    break
-                },
+            result = message_rx.recv() => if let Some(message) = result {
+                framed.send(message).await?;
+            } else {
+                error!("message write channel closed");
+                break
             },
-            result = framed.next() => match result {
-                Some(Ok((message, addr))) => {
+            result = framed.next() => {
+                if let Some(Ok((message, addr))) = result {
                     trace!(?message, "dispatching message");
-                    if let Err(e) = dispatch_message(message_tx, state, addr, message, connections_tx).await {
+                    if let Err(e) = dispatch_message(&message_tx, &state, addr, message, &connections_tx) {
                         warn!("error dispatching: {}", e);
                     }
-                }
-                Some(Err(e)) => {
+                } else if let Some(Err(e)) = result {
                     warn!("error reading frame: {}", e);
-                    continue
                 }
-                None => continue,
             },
             (session_id, lengths @ (start, end)) = retransmission_timeouts(state.clone()) => {
                 debug!(session_id, ?lengths, "retransmitting due to timeout");
@@ -183,7 +174,7 @@ async fn message_loop(
                 if let Some(Session { addr, sent_data, last_confirmation, .. }) = state.get_mut(&session_id) {
                     *last_confirmation = Instant::now();
 
-                    send_chunked(message_tx, session_id, *addr, start, &sent_data[start..end])?;
+                    send_chunked(&message_tx, session_id, *addr, start, &sent_data[start..end])?;
                 }
             },
             session_id = session_timeouts(state.clone()) => {
@@ -200,9 +191,9 @@ async fn message_loop(
     Ok(())
 }
 
-async fn house_keeping(
-    state: SharedState,
-    message_tx: mpsc::UnboundedSender<(Message, SocketAddr)>,
+fn house_keeping(
+    state: &SharedState,
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
 ) -> anyhow::Result<()> {
     let mut state = state.lock();
 
@@ -246,7 +237,7 @@ async fn house_keeping(
         }) = state.get_mut(&session_id)
         {
             retransmit_queue.remove(index);
-            send_chunked(message_tx, session_id, *addr, start, &sent_data[start..])?;
+            send_chunked(&message_tx, session_id, *addr, start, &sent_data[start..])?;
         }
     }
 
@@ -259,7 +250,7 @@ async fn session_timeouts(state: SharedState) -> usize {
         state
             .iter()
             .map(|(&id, s)| {
-                Box::pin(time::sleep_until(s.active_time + SESSION_TIMEOUT).map(move |_| id))
+                Box::pin(time::sleep_until(s.active_time + SESSION_TIMEOUT).map(move |()| id))
             })
             .collect::<Vec<_>>()
     };
@@ -284,7 +275,7 @@ async fn retransmission_timeouts(state: SharedState) -> (usize, (usize, usize)) 
                 let end = s.sent_data.len();
                 Box::pin(
                     time::sleep_until(s.last_confirmation + RETRANSMISSION_TIMEOUT)
-                        .map(move |_| (id, (start, end))),
+                        .map(move |()| (id, (start, end))),
                 )
             })
             .collect::<Vec<_>>()
@@ -299,9 +290,9 @@ async fn retransmission_timeouts(state: SharedState) -> (usize, (usize, usize)) 
     result
 }
 
-async fn dispatch_write_request(
-    message_tx: mpsc::UnboundedSender<(Message, SocketAddr)>,
-    state: SharedState,
+fn dispatch_write_request(
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
+    state: &SharedState,
     WriteRequest { session_id, data }: WriteRequest,
 ) -> anyhow::Result<()> {
     let payload = str::from_utf8(&data)?.to_owned();
@@ -321,140 +312,174 @@ async fn dispatch_write_request(
     Ok(())
 }
 
-async fn dispatch_message(
-    message_tx: mpsc::UnboundedSender<(Message, SocketAddr)>,
-    state: SharedState,
+fn handle_connect(
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
+    state: &SharedState,
     addr: SocketAddr,
-    message: Message,
-    connections_tx: mpsc::UnboundedSender<AcceptState>,
+    session_id: usize,
+    connections_tx: &mpsc::UnboundedSender<AcceptState>,
 ) -> anyhow::Result<()> {
-    match message {
-        Message::Connect { session_id } => {
-            let mut state = state.lock();
-            if let Entry::Vacant(entry) = state.entry(session_id) {
-                debug!(session_id, "opening new session");
+    let mut state = state.lock();
+    if let Entry::Vacant(entry) = state.entry(session_id) {
+        debug!(session_id, "opening new session");
 
-                let (read_tx, read_rx) = mpsc::unbounded_channel();
-                let session = Session {
-                    addr,
-                    read_tx,
-                    active_time: Instant::now(),
-                    received_data: String::new(),
-                    sent_data: String::new(),
-                    confirmed_sent_length: 0,
-                    last_confirmation: Instant::now(),
-                    misbehaving: false,
-                    retransmit_queue: vec![],
-                };
+        let (read_tx, read_rx) = mpsc::unbounded_channel();
+        let session = Session {
+            addr,
+            read_tx,
+            active_time: Instant::now(),
+            received_data: String::new(),
+            sent_data: String::new(),
+            confirmed_sent_length: 0,
+            last_confirmation: Instant::now(),
+            misbehaving: false,
+            retransmit_queue: vec![],
+        };
 
-                entry.insert(session);
+        entry.insert(session);
 
-                let accept = AcceptState {
-                    addr,
-                    read_rx,
-                    session_id,
-                };
+        let accept = AcceptState {
+            session_id,
+            addr,
+            read_rx,
+        };
 
-                connections_tx.send(accept)?;
+        connections_tx.send(accept)?;
+    }
+
+    let message = Message::Ack {
+        session_id,
+        length: 0,
+    };
+    message_tx.send((message, addr))?;
+
+    Ok(())
+}
+
+fn handle_ack(state: &SharedState, session_id: usize, length: usize) {
+    let mut state = state.lock();
+    if let Some(Session {
+        active_time,
+        sent_data,
+        confirmed_sent_length,
+        misbehaving,
+        retransmit_queue,
+        last_confirmation,
+        ..
+    }) = state.get_mut(&session_id)
+    {
+        debug!(session_id, length, "received ack");
+
+        *active_time = Instant::now();
+
+        if length < *confirmed_sent_length {
+            trace!(
+                session_id,
+                length, confirmed_sent_length, "ignoring, already seen this ack"
+            );
+            return;
+        }
+
+        retransmit_queue.retain(|&(_, start)| start > length);
+
+        let unconfirmed_sent_length = sent_data.len();
+        match length.cmp(&unconfirmed_sent_length) {
+            Ordering::Less => retransmit_queue.push((Instant::now(), length)),
+            Ordering::Equal => {
+                trace!(session_id, length, "setting confirmed length");
+                *confirmed_sent_length = length;
+                *last_confirmation = Instant::now();
             }
+            Ordering::Greater => {
+                *misbehaving = true;
+            }
+        }
+    }
+}
+
+fn handle_data(
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
+    state: &SharedState,
+    session_id: usize,
+    position: usize,
+    payload: String,
+) -> anyhow::Result<()> {
+    let mut state = state.lock();
+    if let Some(Session {
+        active_time,
+        addr,
+        received_data,
+        read_tx,
+        ..
+    }) = state.get_mut(&session_id)
+    {
+        *active_time = Instant::now();
+        if position == received_data.len() {
+            debug!(session_id, position, ?payload, "received data");
+            received_data.push_str(&payload);
 
             let message = Message::Ack {
                 session_id,
-                length: 0,
+                length: received_data.len(),
             };
-            message_tx.send((message, addr))?;
+            message_tx.send((message, *addr))?;
+
+            read_tx.send(payload.into())?;
+        } else {
+            let length = received_data.len();
+            debug!(
+                session_id,
+                length, "position doesn't match received, resending ack of last length"
+            );
+            let message = Message::Ack { session_id, length };
+            message_tx.send((message, *addr))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_close(
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
+    state: &SharedState,
+    addr: SocketAddr,
+    session_id: usize,
+) -> anyhow::Result<()> {
+    debug!(session_id, "closing");
+
+    {
+        let mut state = state.lock();
+        state.remove(&session_id);
+    }
+
+    let message = Message::Close { session_id };
+    message_tx.send((message, addr))?;
+
+    Ok(())
+}
+
+fn dispatch_message(
+    message_tx: &mpsc::UnboundedSender<(Message, SocketAddr)>,
+    state: &SharedState,
+    addr: SocketAddr,
+    message: Message,
+    connections_tx: &mpsc::UnboundedSender<AcceptState>,
+) -> anyhow::Result<()> {
+    match message {
+        Message::Connect { session_id } => {
+            handle_connect(message_tx, state, addr, session_id, connections_tx)
         }
         Message::Ack { session_id, length } => {
-            let mut state = state.lock();
-            if let Some(Session {
-                active_time,
-                sent_data,
-                confirmed_sent_length,
-                misbehaving,
-                retransmit_queue,
-                last_confirmation,
-                ..
-            }) = state.get_mut(&session_id)
-            {
-                debug!(session_id, length, "received ack");
-
-                *active_time = Instant::now();
-
-                if length < *confirmed_sent_length {
-                    trace!(
-                        session_id,
-                        length, confirmed_sent_length, "ignoring, already seen this ack"
-                    );
-                    return Ok(());
-                }
-
-                retransmit_queue.retain(|&(_, start)| start > length);
-
-                let unconfirmed_sent_length = sent_data.len();
-                match length.cmp(&unconfirmed_sent_length) {
-                    Ordering::Less => retransmit_queue.push((Instant::now(), length)),
-                    Ordering::Equal => {
-                        trace!(session_id, length, "setting confirmed length");
-                        *confirmed_sent_length = length;
-                        *last_confirmation = Instant::now();
-                    }
-                    Ordering::Greater => {
-                        *misbehaving = true;
-                    }
-                }
-            }
+            handle_ack(state, session_id, length);
+            Ok(())
         }
         Message::Data {
             session_id,
             position,
             payload,
-        } => {
-            let mut state = state.lock();
-            if let Some(Session {
-                active_time,
-                addr,
-                received_data,
-                read_tx,
-                ..
-            }) = state.get_mut(&session_id)
-            {
-                *active_time = Instant::now();
-                if position == received_data.len() {
-                    debug!(session_id, position, ?payload, "received data");
-                    received_data.push_str(&payload);
-
-                    let message = Message::Ack {
-                        session_id,
-                        length: received_data.len(),
-                    };
-                    message_tx.send((message, *addr))?;
-
-                    read_tx.send(payload.into())?;
-                } else {
-                    let length = received_data.len();
-                    debug!(
-                        session_id,
-                        length, "position doesn't match received, resending ack of last length"
-                    );
-                    let message = Message::Ack { session_id, length };
-                    message_tx.send((message, *addr))?;
-                }
-            }
-        }
-        Message::Close { session_id } => {
-            debug!(session_id, "closing");
-
-            {
-                let mut state = state.lock();
-                state.remove(&session_id);
-            }
-
-            let message = Message::Close { session_id };
-            message_tx.send((message, addr))?;
-        }
+        } => handle_data(message_tx, state, session_id, position, payload),
+        Message::Close { session_id } => handle_close(message_tx, state, addr, session_id),
     }
-
-    Ok(())
 }
 
 impl LrcpStream {
