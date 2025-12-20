@@ -57,7 +57,7 @@ impl Decoder for CipherSpecCodec {
             let input = &input[..input.len() - 1];
             match cipher_spec(input) {
                 Ok((_, spec)) => Ok(Some(spec)),
-                Err(e) => bail!("error reading spec: {:?}", e),
+                Err(e) => bail!("error reading spec: {e:?}"),
             }
         } else {
             self.next_index = read_to;
@@ -117,7 +117,7 @@ impl Cipher {
 
         let spec = match cipher_spec(buffer).finish() {
             Ok((_, s)) => s,
-            Err(e) => bail!("error parsing spec: {:?}", e),
+            Err(e) => bail!("error parsing spec: {e:?}"),
         };
 
         Ok(Self { spec, position: 0 })

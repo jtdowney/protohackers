@@ -74,7 +74,7 @@ impl Decoder for SpeedDaemonCodec {
                 message
             }
             Err(nom::Err::Incomplete(_)) => return Ok(None),
-            Err(e) => bail!("error parsing {:?}: {}", src, e),
+            Err(e) => bail!("error parsing {src:?}: {e}"),
         };
 
         src.advance(used_length);

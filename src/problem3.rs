@@ -116,9 +116,7 @@ impl ConnectionHandler for Handler {
                 }
                 Ok(Action::Disconnect) => break,
                 Err(e) => bail!(
-                    "an error occurred while processing messages for {}; error = {:?}",
-                    username,
-                    e
+                    "an error occurred while processing messages for {username}; error = {e:?}"
                 ),
             }
         }

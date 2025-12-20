@@ -1,8 +1,11 @@
 use std::{marker::PhantomData, str};
 
+use anyhow::bail;
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
+
+const MAX_LINE_SIZE: usize = 8192;
 
 #[derive(Default)]
 pub struct StrictLinesCodec {
@@ -27,6 +30,9 @@ impl Decoder for StrictLinesCodec {
             let line = str::from_utf8(line)?;
             Ok(Some(line.to_string()))
         } else {
+            if read_to > MAX_LINE_SIZE {
+                bail!("line exceeds maximum size of {MAX_LINE_SIZE} bytes");
+            }
             self.next_index = read_to;
             Ok(None)
         }
@@ -86,6 +92,9 @@ impl<Req: for<'a> Deserialize<'a>, Resp: Serialize> Decoder for JsonLinesCodec<R
             let request = serde_json::from_slice(line)?;
             Ok(Some(request))
         } else {
+            if read_to > MAX_LINE_SIZE {
+                bail!("line exceeds maximum size of {MAX_LINE_SIZE} bytes");
+            }
             self.next_index = read_to;
             Ok(None)
         }

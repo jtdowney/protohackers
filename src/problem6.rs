@@ -291,6 +291,11 @@ fn check_speed(
         (i32::from(camera1.mile) - i32::from(camera2.mile)).unsigned_abs() * 100;
     #[allow(clippy::cast_possible_truncation)]
     let time_traveled = (i64::from(timestamp1) - i64::from(timestamp2)).unsigned_abs() as u32;
+
+    if time_traveled == 0 {
+        return None;
+    }
+
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let cmph_traveled =
         (f64::from(centimiles_traveled) / f64::from(time_traveled) * 60.0 * 60.0) as u32;

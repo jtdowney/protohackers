@@ -277,9 +277,20 @@ impl ConnectionHandler for Handler {
         }
 
         requeue_in_progress_job(&state, addr)?;
+        cleanup_waiting_queues(&state, addr);
 
         Ok(())
     }
+}
+
+fn cleanup_waiting_queues(state: &SharedState, addr: SocketAddr) {
+    let mut state = state.lock();
+    for waiters in state.waiting_queues.values_mut() {
+        waiters.remove(&addr);
+    }
+    state
+        .waiting_queues
+        .retain(|_, waiters| !waiters.is_empty());
 }
 
 fn notify_waiting_workers(

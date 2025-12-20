@@ -52,8 +52,9 @@ fn handle_get_command(state: &SharedState, file: &str, revision: Option<usize>) 
             .get(file)
             .and_then(|revisions| {
                 let revision = revision.unwrap_or(revisions.len());
-                revisions
-                    .get(revision - 1)
+                revision
+                    .checked_sub(1)
+                    .and_then(|idx| revisions.get(idx))
                     .and_then(|blob| state.blobs.get(blob))
             })
             .cloned()
@@ -77,7 +78,11 @@ fn handle_put_command(state: &SharedState, file: String, data: Vec<u8>) -> Reply
     let mut parts = file.split('/');
     let _ = parts.next();
     let mut parts = parts.collect::<Vec<_>>();
-    let filename = parts.pop().unwrap();
+    let filename = parts.pop().unwrap_or("");
+
+    if filename.is_empty() {
+        return Reply::Error("invalid filename".into());
+    }
 
     let mut path = String::from("/");
     for part in parts {

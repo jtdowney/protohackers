@@ -10,9 +10,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use bytes::{Bytes, BytesMut};
 use futures_util::{FutureExt, SinkExt, StreamExt, ready};
+use itertools::Itertools;
 use parking_lot::Mutex;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -29,6 +30,7 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(60);
 const RETRANSMISSION_TIMEOUT: Duration = Duration::from_secs(3);
 const ACK_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 const CHUNK_SIZE: usize = 900;
+const MAX_SESSION_BUFFER_SIZE: usize = 1024 * 1024;
 
 struct Session {
     active_time: Instant,
@@ -113,9 +115,14 @@ fn send_chunked(
     start: usize,
     payload: impl AsRef<str>,
 ) -> anyhow::Result<()> {
-    let chars = payload.as_ref().chars().collect::<Vec<_>>();
-    for (i, chunk) in chars.chunks(CHUNK_SIZE).enumerate() {
-        let payload = chunk.iter().collect::<String>();
+    for (i, chunk) in payload
+        .as_ref()
+        .chars()
+        .chunks(CHUNK_SIZE)
+        .into_iter()
+        .enumerate()
+    {
+        let payload: String = chunk.collect();
 
         let position = start + (i * CHUNK_SIZE);
         let message = Message::Data {
@@ -303,6 +310,10 @@ fn dispatch_write_request(
         addr, sent_data, ..
     }) = state.get_mut(&session_id)
     {
+        if sent_data.len() + payload.len() > MAX_SESSION_BUFFER_SIZE {
+            bail!("session buffer overflow");
+        }
+
         let position = sent_data.len();
         sent_data.push_str(&payload);
 
@@ -410,11 +421,17 @@ fn handle_data(
         addr,
         received_data,
         read_tx,
+        misbehaving,
         ..
     }) = state.get_mut(&session_id)
     {
         *active_time = Instant::now();
         if position == received_data.len() {
+            if received_data.len() + payload.len() > MAX_SESSION_BUFFER_SIZE {
+                *misbehaving = true;
+                return Ok(());
+            }
+
             debug!(session_id, position, ?payload, "received data");
             received_data.push_str(&payload);
 

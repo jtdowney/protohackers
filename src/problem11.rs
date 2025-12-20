@@ -69,7 +69,7 @@ where
     };
     sink.send(error)
         .await
-        .map_err(|e| anyhow::anyhow!("send error: {}", e))
+        .map_err(|e| anyhow::anyhow!("send error: {e}"))
 }
 
 impl SiteManager {
@@ -208,15 +208,15 @@ impl SiteManager {
                                     self.current_policies.remove(&species);
                                 }
                                 AuthorityError::Other(msg) => {
-                                    return Err(anyhow!("error deleting policy: {}", msg));
+                                    return Err(anyhow!("error deleting policy: {msg}"));
                                 }
                                 AuthorityError::PolicyAlreadyExists => {
-                                    return Err(anyhow!("error deleting policy: {}", message));
+                                    return Err(anyhow!("error deleting policy: {message}"));
                                 }
                             }
                         }
                         Some(Err(e)) => {
-                            return Err(anyhow!("error receiving delete response: {}", e));
+                            return Err(anyhow!("error receiving delete response: {e}"));
                         }
                         None => {
                             return Err(anyhow!(
@@ -224,7 +224,7 @@ impl SiteManager {
                             ));
                         }
                         Some(Ok(msg)) => {
-                            return Err(anyhow!("unexpected response to DeletePolicy: {:?}", msg));
+                            return Err(anyhow!("unexpected response to DeletePolicy: {msg:?}"));
                         }
                     }
                 }
@@ -246,12 +246,12 @@ impl SiteManager {
                                     self.current_policies.remove(&species);
                                 }
                                 _ => {
-                                    return Err(anyhow!("error creating policy: {}", message));
+                                    return Err(anyhow!("error creating policy: {message}"));
                                 }
                             }
                         }
                         Some(Err(e)) => {
-                            return Err(anyhow!("error receiving create response: {}", e));
+                            return Err(anyhow!("error receiving create response: {e}"));
                         }
                         None => {
                             return Err(anyhow!(
@@ -259,7 +259,7 @@ impl SiteManager {
                             ));
                         }
                         Some(Ok(msg)) => {
-                            return Err(anyhow!("unexpected response to CreatePolicy: {:?}", msg));
+                            return Err(anyhow!("unexpected response to CreatePolicy: {msg:?}"));
                         }
                     }
                 }
@@ -340,7 +340,7 @@ impl ConnectionHandler for Handler {
 
         sink.send(hello)
             .await
-            .map_err(|e| anyhow!("send error: {}", e))?;
+            .map_err(|e| anyhow!("send error: {e}"))?;
 
         match stream.next().await {
             Some(Ok(Message::Hello { protocol, version })) => {
@@ -417,14 +417,13 @@ impl Handler {
         };
 
         if site_manager.send(command).await.is_err() {
-            return Err(anyhow!("Site manager for site {} is not responding", site));
+            return Err(anyhow!("Site manager for site {site} is not responding"));
         }
 
         match response_rx.await {
             Ok(result) => result,
             Err(_) => Err(anyhow!(
-                "Site manager for site {} dropped response channel",
-                site
+                "Site manager for site {site} dropped response channel"
             )),
         }
     }

@@ -1,6 +1,6 @@
 use std::{fmt::Write, str};
 
-use anyhow::{ensure, format_err};
+use anyhow::{bail, ensure, format_err};
 use nom::{
     Finish, IResult, Parser,
     branch::alt,
@@ -10,6 +10,8 @@ use nom::{
 };
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{trace, warn};
+
+const MAX_PACKET_SIZE: usize = 1000;
 
 #[derive(Debug, PartialEq)]
 pub enum Message {
@@ -94,9 +96,9 @@ impl Decoder for LrcpCodec {
             return Ok(None);
         }
 
-        if src.len() > 1000 {
-            warn!(len = src.len(), "packet is over a 1000 bytes");
-            // TODO: ignore for being too long
+        if src.len() > MAX_PACKET_SIZE {
+            src.clear();
+            bail!("packet exceeds maximum size of {MAX_PACKET_SIZE} bytes");
         }
 
         let buffer = str::from_utf8(src)?.to_owned();
@@ -106,7 +108,7 @@ impl Decoder for LrcpCodec {
                 Ok(Some(message))
             }
             Err(e) => {
-                let e = format_err!("error parsing {:?}: {}", src, e);
+                let e = format_err!("error parsing {src:?}: {e}");
                 Err(e)
             }
         };

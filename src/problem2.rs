@@ -54,7 +54,7 @@ impl Decoder for PacketCodec {
         let buffer = src.split_to(PACKET_SIZE);
         match packet(&buffer).finish() {
             Ok((_, p)) => Ok(Some(p)),
-            Err(e) => bail!("failed to parse {:?}: {:?}", buffer, e),
+            Err(e) => bail!("failed to parse {buffer:?}: {e:?}"),
         }
     }
 }

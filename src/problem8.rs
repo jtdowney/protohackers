@@ -29,7 +29,7 @@ impl ConnectionHandler for Handler {
         let spec = match framed.next().await {
             Some(Ok(s)) => s,
             Some(Err(e)) => {
-                bail!("error reading spec: {:?}", e);
+                bail!("error reading spec: {e:?}");
             }
             None => bail!("unexpected EOF while reading cipher spec"),
         };
