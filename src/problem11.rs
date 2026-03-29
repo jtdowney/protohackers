@@ -10,11 +10,12 @@ use std::{
 use anyhow::anyhow;
 use codec::{Action, Message, PestControlCodec, TargetPopulation};
 use futures_util::{Sink, SinkExt, StreamExt};
+use parking_lot::Mutex;
 use thiserror::Error;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
-    sync::{Mutex, mpsc, oneshot},
+    sync::{mpsc, oneshot},
 };
 use tokio_util::codec::Framed;
 
@@ -383,7 +384,7 @@ impl ConnectionHandler for Handler {
 
 impl Handler {
     async fn get_or_create_site_manager(&self, site: u32) -> mpsc::Sender<SiteVisitCommand> {
-        let mut registry = self.site_manager_registry.lock().await;
+        let mut registry = self.site_manager_registry.lock();
 
         if let Some(sender) = registry.get(&site) {
             if !sender.is_closed() {
