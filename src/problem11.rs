@@ -383,7 +383,7 @@ impl ConnectionHandler for Handler {
 }
 
 impl Handler {
-    async fn get_or_create_site_manager(&self, site: u32) -> mpsc::Sender<SiteVisitCommand> {
+    fn get_or_create_site_manager(&self, site: u32) -> mpsc::Sender<SiteVisitCommand> {
         let mut registry = self.site_manager_registry.lock();
 
         if let Some(sender) = registry.get(&site) {
@@ -409,7 +409,7 @@ impl Handler {
         site: u32,
         populations: &[codec::Population],
     ) -> anyhow::Result<()> {
-        let site_manager = self.get_or_create_site_manager(site).await;
+        let site_manager = self.get_or_create_site_manager(site);
         let (response_tx, response_rx) = oneshot::channel();
 
         let command = SiteVisitCommand {
