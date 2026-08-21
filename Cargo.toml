@@ -17,7 +17,7 @@ blake3 = "1"
 bytes = "1"
 futures-concurrency = "7"
 futures-util = { version = "0.3.31", features = ["sink"] }
-itertools = "0.14.0"
+itertools = "0.15.0"
 lockfree = "0.5.1"
 nom = { version = "8", features = ["alloc"] }
 parking_lot = "0.12.3"

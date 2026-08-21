@@ -251,8 +251,8 @@ async fn check_for_ticket(state: SharedState, plate: String, road: Road) -> anyh
             let date = timestamp_to_date(t);
             !existing_dates.contains(&date)
         })
-        .tuple_combinations()
-        .find_map(|((ta, ca), (tb, cb))| {
+        .array_combinations()
+        .find_map(|[(ta, ca), (tb, cb)]| {
             let speed = check_speed(ta, ca, tb, cb)?;
             let (timestamp1, mile1, timestamp2, mile2) = if ta < tb {
                 (ta, ca.mile, tb, cb.mile)
